@@ -25,8 +25,3 @@ This repository contains the machine learning pipeline to:
 3. Predict green space characteristics at scale
 4. Validate model performance against human annotations
 
-## Getting Started
-```bash
-pip install -r requirements.txt
-python src/main.py --help
-```
