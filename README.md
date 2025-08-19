@@ -37,3 +37,15 @@ Keras makes it straightforward to build one CNN with multiple outputs. It suits 
 - Multi-label binary: sports_field, multipurpose_open_area, childrens_playground, water_feature, gardens, walking_paths (Round 5)
 - Ordinal: shade_along_paths ∈ {None, Some (<50%), Abundant (>50%)}.
 - Global 1–5 score: structured_unstructured_rating
+
+**Training Step:**
+1. Pick a backbone (e.g., EfficientNet-B0/B3 or ResNet-50)
+    - These are well-tested, fast, and have pretrained weights.
+2. Warm-up phase (frozen backbone)
+    - Freeze the backbone (don’t change its weights) and train only the heads.
+    - This lets the heads quickly learn our label definitions using the backbone’s generic features.
+3. Finetuning
+    - Unfreeze the top few blocks of the backbone and train at a lower learning rate.
+    - This adapts the generic features to the specifics of our own image set.
+4. Evaluate and calibrate
+    - We check performance on holdout images and set thresholds for the binary labels to meet our priorities.
