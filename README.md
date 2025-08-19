@@ -28,10 +28,10 @@ This repository contains the machine learning pipeline to:
 **Why Tensorflow**
 1. Keras API
 High-level Tensorflow API. It takes care of the training loop, metrics, logging, and saving models.
-- Concise and User-friendly
+    - Concise and User-friendly
 2. Multi-task models
 Keras makes it straightforward to build one CNN with multiple outputs. It suits our usecase because:
-- we have multilabel binary, ordinal, and 1-5 features. Keras can have a binary head for features, a categorical head for shade, and a 5-class head for structure. 
+    - we have multilabel binary, ordinal, and 1-5 features. Keras can have a binary head for features, a categorical head for shade, and a 5-class head for structure. 
 
 **Our Label:**
 - Multi-label binary: sports_field, multipurpose_open_area, childrens_playground, water_feature, gardens, walking_paths (Round 5)
