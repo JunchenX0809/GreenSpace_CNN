@@ -1,0 +1,31 @@
+# Keep raw data and large artifacts out of Git
+# Data directories
+/data/**
+!/data/README.md
+
+# Local datasets
+/datasets/**
+!/datasets/README.md
+
+# Models and outputs
+/models/**
+!/models/README.md
+/outputs/**
+!/outputs/README.md
+
+# Logs
+/logs/**
+!/logs/.gitkeep
+
+# Notebooks checkpoints
+**/.ipynb_checkpoints/**
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
