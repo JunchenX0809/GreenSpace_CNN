@@ -92,3 +92,29 @@ Open `notebooks/02_data_preprocessing.ipynb` and run cells:
 
 Notes:
 - Raw data and images are ignored by Git; manifests under `data/processed/` can be committed for reproducibility.
+
+### Alternative: Download prepackaged archive (shared drive)
+If you prefer, download a zipped project snapshot from the team drive and set up locally:
+
+1. Download from the team folder: [Shared Google Drive](https://drive.google.com/drive/folders/1u_32rK3jT_CVv2ycraPY31Gib5RwUjdb)
+2. Unzip to your workspace directory
+3. Create and activate a virtual environment, then install deps:
+   - macOS (Apple Silicon):
+     ```bash
+     python3 -m venv .venv
+     source .venv/bin/activate
+     python -m pip install -U pip
+     pip install -r requirements.txt
+     pip install "tensorflow-macos>=2.16" tensorflow-metal
+     ```
+   - Linux/Windows:
+     ```bash
+     python -m venv .venv
+     .venv\\Scripts\\activate  # Windows
+     # or: source .venv/bin/activate  # Linux
+     python -m pip install -U pip
+     pip install -r requirements.txt
+     pip install "tensorflow>=2.16"
+     ```
+4. (Optional) Register the Jupyter kernel as above
+5. Place raw CSV/images under `data/raw/`, run `scripts/clean_survey.py`, then the 02 notebook
