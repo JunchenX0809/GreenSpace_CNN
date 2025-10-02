@@ -49,3 +49,72 @@ Keras makes it straightforward to build one CNN with multiple outputs. It suits 
     - This adapts the generic features to the specifics of our own image set.
 4. Evaluate and calibrate
     - We check performance on holdout images and set thresholds for the binary labels to meet our priorities.
+
+## Setup and Quick Start
+
+### 1) Create a virtual environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+```
+
+### 2) Install dependencies
+- Base packages (shared across platforms):
+```bash
+pip install -r requirements.txt
+```
+- Apple Silicon (macOS, Metal acceleration):
+```bash
+pip install "tensorflow-macos>=2.16" tensorflow-metal
+```
+- Linux/Windows: install `tensorflow>=2.16` instead of the Apple Silicon packages.
+
+
+### 3) Place data
+- Raw CSV: `data/raw/survey_responses.csv`
+- Images: `data/raw/images/` (filenames must match the CSV after cleaning)
+
+### 4) Clean the survey CSV (reproducible script)
+```bash
+python scripts/clean_survey.py \
+  --in-csv data/raw/survey_responses.csv \
+  --out-csv data/raw/survey_responses_clean.csv
+```
+
+### 5) Run preprocessing notebook
+Open `notebooks/02_data_preprocessing.ipynb` and run cells:
+- Step 1: validate CSV ↔ images (prints counts)
+- Step 2: aggregate raters → writes `data/processed/labels_soft.csv` and `labels_hard.csv`
+- Step 3: print label prevalence
+- Step 4: build oversampled + augmented preview stream (in-memory)
+- Step 5: dynamic 60/20/20 split → writes `data/processed/splits/{train,val,test}.csv`
+
+Notes:
+- Raw data and images are ignored by Git; manifests under `data/processed/` can be committed for reproducibility.
+
+### Alternative: Download prepackaged archive (shared drive)
+If you prefer, download a zipped project snapshot from the team drive and set up locally:
+
+1. Download from the team folder: [Shared Google Drive](https://drive.google.com/drive/folders/1u_32rK3jT_CVv2ycraPY31Gib5RwUjdb)
+2. Unzip to your workspace directory
+3. Create and activate a virtual environment, then install deps:
+   - macOS (Apple Silicon):
+     ```bash
+     python3 -m venv .venv
+     source .venv/bin/activate
+     python -m pip install -U pip
+     pip install -r requirements.txt
+     pip install "tensorflow-macos>=2.16" tensorflow-metal
+     ```
+   - Linux/Windows:
+     ```bash
+     python -m venv .venv
+     .venv\\Scripts\\activate  # Windows
+     # or: source .venv/bin/activate  # Linux
+     python -m pip install -U pip
+     pip install -r requirements.txt
+     pip install "tensorflow>=2.16"
+     ```
+4. (Optional) Register the Jupyter kernel as above
+5. Place raw CSV/images under `data/raw/`, run `scripts/clean_survey.py`, then the 02 notebook

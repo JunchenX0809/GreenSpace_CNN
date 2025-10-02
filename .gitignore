@@ -24,6 +24,12 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.venv/
+.env
+.env.*
+*.env
+Pipfile
+Pipfile.lock
 
 # OS / Editor
 .DS_Store
