@@ -3,7 +3,7 @@ tensorflow>=2.15.0
 keras>=2.15.0
 
 # Computer vision and image processing
-opencv-python>=4.8.0
+opencv-python<4.12
 pillow>=10.0.0
 albumentations>=1.3.0
 scikit-image>=0.21.0
@@ -16,7 +16,7 @@ pyproj>=3.6.0
 
 # Data handling and analysis
 pandas>=2.0.0
-numpy>=1.24.0
+numpy<2
 scikit-learn>=1.3.0
 h5py>=3.9.0
 
