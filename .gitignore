@@ -3,6 +3,9 @@
 /data/**
 !/data/README.md
 
+# Secrets
+/secrets/**
+!/secrets/README.md
 # Local datasets
 /datasets/**
 !/datasets/README.md
