@@ -1,6 +1,8 @@
 # Core deep learning - TensorFlow/Keras stack
-tensorflow>=2.15.0
-keras>=2.15.0
+# NOTE:
+# - On Python 3.12, TensorFlow 2.16+ is typically required.
+# - Avoid pinning standalone `keras` separately; it can cause TF/Keras version skew.
+tensorflow>=2.16.0
 
 # Computer vision and image processing
 opencv-python<4.12
