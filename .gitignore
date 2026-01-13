@@ -1,7 +1,14 @@
 # Keep raw data and large artifacts out of Git
 # Data directories
-/data/**
+# - Keep the directory structure + README files in git
+# - Ignore large / local / derived contents inside each subfolder
+/data/raw/**
+/data/interim/**
+/data/cache/**
+/data/processed/**
 !/data/README.md
+!/data/**/README.md
+!/data/**/.gitkeep
 
 # Secrets
 /secrets/**
