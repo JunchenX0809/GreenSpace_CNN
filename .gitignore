@@ -15,6 +15,7 @@
 !/models/README.md
 /outputs/**
 !/outputs/README.md
+.keras/
 
 # Logs
 /logs/**

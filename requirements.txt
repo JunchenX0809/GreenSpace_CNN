@@ -1,8 +1,9 @@
 # Core deep learning - TensorFlow/Keras stack
-# NOTE:
-# - On Python 3.12, TensorFlow 2.16+ is typically required.
+# IMPORTANT:
+# - We intentionally do NOT pin/install TensorFlow here because the correct package
+#   depends on platform (Apple Silicon vs Linux/Windows vs Intel macOS).
+# - See README "Install TensorFlow" section for the correct command.
 # - Avoid pinning standalone `keras` separately; it can cause TF/Keras version skew.
-tensorflow>=2.16.0
 
 # Computer vision and image processing
 opencv-python<4.12

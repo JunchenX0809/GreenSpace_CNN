@@ -1,0 +1,8 @@
+[project]
+name = "greenspace-cnn"
+version = "0.0.0"
+# Standardize on Python 3.11 for team onboarding:
+# - Avoids prior TF issues seen on some 3.12 setups
+# - Avoids upcoming deprecation warnings from Google client libs on 3.10
+requires-python = ">=3.11,<3.13"
+
