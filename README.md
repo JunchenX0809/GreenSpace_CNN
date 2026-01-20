@@ -121,6 +121,13 @@ python scripts/diagnose_tf_env.py
 - Raw survey CSV: `data/raw/0103_survey_response.csv` (or your latest dated file)
 - Images are downloaded/cached locally under `data/cache/images/` by the preprocessing notebook
 
+### 3b) Google Drive authentication (for image download)
+To download/cached images from the team Google Drive folder (used by `notebooks/02_data_preprocessing.ipynb`):
+- Put OAuth secrets at `secrets/client_secrets.json`
+- Create a project-root `.env` with `GOOGLE_DRIVE_FOLDER_ID="..."` (required)
+
+Full walkthrough + troubleshooting: see `instruction_docs/google_drive_auth.md`.
+
 ### 4) Clean the survey CSV (reproducible script)
 ```bash
 python scripts/clean_survey.py \
