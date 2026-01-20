@@ -14,9 +14,9 @@ This is the file you likely “downloaded locally” before.
 1. **Open Google Cloud Console → APIs & Services**
    - Select an existing project, or create a new one.
 
-![After creating/selecting a project](instruction_docs/images/1_after_creating_project.png)
+![After creating/selecting a project](images/1_after_creating_project.png)
 
-![APIs & Services page](instruction_docs/images/2_in_API_servicing_page.png)
+![APIs & Services page](images/2_in_API_servicing_page.png)
 
 2. **Configure the OAuth consent screen**
    - Go to **OAuth consent screen**
@@ -24,14 +24,14 @@ This is the file you likely “downloaded locally” before.
    - Fill out the required fields (app name + contact email)
    - Add yourself as a **Test user** (important if the app is in “Testing”)
 
-![OAuth consent screen](instruction_docs/images/3_in_auth_screen.png)
+![OAuth consent screen](images/3_in_auth_screen.png)
 
 3. **Create an OAuth Client ID**
    - Go to **Credentials → Create Credentials → OAuth client ID**
    - Application type: **Desktop app** (recommended for this notebook workflow)
    - Create it
 
-![Create OAuth client ID](instruction_docs/images/4_in_client_creation_page.png)
+![Create OAuth client ID](images/4_in_client_creation_page.png)
 
 4. **Download the JSON**
    - In **Credentials**, find the client you created and click **Download JSON**
