@@ -126,7 +126,7 @@ To download/cached images from the team Google Drive folder (used by `notebooks/
 - Put OAuth secrets at `secrets/client_secrets.json`
 - Create a project-root `.env` with `GOOGLE_DRIVE_FOLDER_ID="..."` (required)
 
-Full walkthrough + troubleshooting: see `instruction_docs/google_drive_auth.md`.
+Full walkthrough + troubleshooting: see [Google Drive authentication guide](instruction_docs/google_drive_auth.md).
 
 ### 4) Clean the survey CSV (reproducible script)
 ```bash

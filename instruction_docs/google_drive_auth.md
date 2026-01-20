@@ -4,24 +4,55 @@ This project uses **PyDrive2 OAuth** to access images stored in a shared Google 
 
 ## What you need
 - A Google account that has access to the shared Drive folder
-- The Drive folder ID (ask the project owner)
+- The Drive folder ID: 1upr61AWU85uyOjVcVWqhJbXeJG296FN4
 - An OAuth client secrets JSON file (ask the project owner)
 
 ## 1) Put the OAuth client secrets in the repo
-Place the JSON file at:
+### 1A) Download the OAuth client secrets JSON from Google Cloud Console
+This is the file you likely “downloaded locally” before.
+
+1. **Open Google Cloud Console → APIs & Services**
+   - Select an existing project, or create a new one.
+
+![After creating/selecting a project](instruction_docs/images/1_after_creating_project.png)
+
+![APIs & Services page](instruction_docs/images/2_in_API_servicing_page.png)
+
+2. **Configure the OAuth consent screen**
+   - Go to **OAuth consent screen**
+   - Choose **External** (most common) unless your org requires Internal
+   - Fill out the required fields (app name + contact email)
+   - Add yourself as a **Test user** (important if the app is in “Testing”)
+
+![OAuth consent screen](instruction_docs/images/3_in_auth_screen.png)
+
+3. **Create an OAuth Client ID**
+   - Go to **Credentials → Create Credentials → OAuth client ID**
+   - Application type: **Desktop app** (recommended for this notebook workflow)
+   - Create it
+
+![Create OAuth client ID](instruction_docs/images/4_in_client_creation_page.png)
+
+4. **Download the JSON**
+   - In **Credentials**, find the client you created and click **Download JSON**
+   - The downloaded filename typically looks like:
+     - `client_secret_XXXXXXXX.apps.googleusercontent.com.json`
+
+### 1B) Put the JSON into this repo
+Move/rename the downloaded JSON file to:
 - `secrets/client_secrets.json`
 
 This path is the default used by `src/drive_utils.py` (and `secrets/` is gitignored).
 
 ## 2) Create a `.env` in the project root
-Create `./.env` (not committed) and set at least:
+Create `./.env` (not committed) and set (copy & paste):
 
 ```bash
 # Required: Drive folder that contains images
-GOOGLE_DRIVE_FOLDER_ID="YOUR_FOLDER_ID_HERE"
+GOOGLE_DRIVE_FOLDER_ID=1upr61AWU85uyOjVcVWqhJbXeJG296FN4
 ```
 
-Optional knobs (defaults shown):
+Other knobs (defaults shown):
 
 ```bash
 # If the folder is a Shared Drive, keep this true
