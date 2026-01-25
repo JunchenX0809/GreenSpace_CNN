@@ -16,13 +16,13 @@ This is the file you likely “downloaded locally” before.
 
 ![After creating/selecting a project](images/1_after_creating_project.png)
 
-![APIs & Services page](images/2_in_API_servicing_page.png)
+
 
 2. **Configure the OAuth consent screen**
    - Go to **OAuth consent screen**
-   - Choose **External** (most common) unless your org requires Internal
+   ![APIs & Services page](images/2_in_API_servicing_page.png)
    - Fill out the required fields (app name + contact email)
-   - Add yourself as a **Test user** (important if the app is in “Testing”)
+
 
 ![OAuth consent screen](images/3_in_auth_screen.png)
 
