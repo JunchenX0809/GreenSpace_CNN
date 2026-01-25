@@ -5,7 +5,7 @@ This project uses **PyDrive2 OAuth** to access images stored in a shared Google 
 ## What you need
 - A Google account that has access to the shared Drive folder
 - The Drive folder ID: 1upr61AWU85uyOjVcVWqhJbXeJG296FN4
-- An OAuth client secrets JSON file (ask the project owner)
+- An OAuth client secrets JSON file
 
 ## 1) Put the OAuth client secrets in the repo
 ### 1A) Download the OAuth client secrets JSON from Google Cloud Console
@@ -27,7 +27,7 @@ This is the file you likely “downloaded locally” before.
 ![OAuth consent screen](images/3_in_auth_screen.png)
 
 3. **Create an OAuth Client ID**
-   - Go to **Credentials → Create Credentials → OAuth client ID**
+   - Go to **Clients → Create client → OAuth client ID**
    - Application type: **Desktop app** (recommended for this notebook workflow)
    - Create it
 

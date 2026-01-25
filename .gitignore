@@ -12,6 +12,7 @@
 
 # Secrets
 /secrets/**
+!/secrets/
 !/secrets/README.md
 # Local datasets
 /datasets/**
