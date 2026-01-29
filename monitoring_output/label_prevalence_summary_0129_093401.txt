@@ -1,0 +1,59 @@
+Images with aggregated labels: 3160
+Binary prevalence (soft mean prob) and expected positives:
+                          prevalence  expected_positives
+gardens_p                      0.033               105.4
+children_s_playground_p        0.112               354.8
+water_feature_p                0.192               606.5
+sports_field_p                 0.267               844.6
+parking_lots_p                 0.282               890.9
+built_structures_p             0.402              1270.2
+walking_paths_p                0.727              2296.1
+multipurpose_open_area_p       0.771              2437.4
+
+Rare-ish binaries (<=10% prevalence):
+           prevalence  expected_positives
+gardens_p       0.033               105.4
+
+Shade distribution (soft):
+           prob
+minimal   0.662
+abundant  0.338
+
+Structured–Unstructured distribution (soft):
+          prob
+score_1  0.190
+score_2  0.199
+score_3  0.203
+score_4  0.198
+score_5  0.209
+Mean structured score: 3.038 ± 1.390
+
+Vegetation distribution (soft):
+        prob
+veg_1  0.077
+veg_2  0.311
+veg_3  0.267
+veg_4  0.199
+veg_5  0.145
+Mean vegetation score: 3.025 ± 1.170
+
+Number of ratings per image:
+count    3160.000000
+mean        1.235443
+std         0.504124
+min         1.000000
+25%         1.000000
+50%         1.000000
+75%         1.000000
+max         6.000000
+
+Hard positive counts (>=0.5 threshold):
+                        positives
+gardens                       117
+children_s_playground         383
+water_feature                 628
+sports_field                  865
+parking_lots                  914
+built_structures             1304
+walking_paths                2335
+multipurpose_open_area       2473
