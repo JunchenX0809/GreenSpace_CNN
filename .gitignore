@@ -32,6 +32,7 @@
 # Notebooks checkpoints
 **/.ipynb_checkpoints/**
 /report_outputs/**
+/monitoring_output/**
 
 # Python
 __pycache__/
