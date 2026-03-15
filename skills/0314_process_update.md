@@ -77,6 +77,7 @@ We apply on the fly augmentation to the training stream only, producing one tran
 
 - **Geometry:** Random 90° rotation (k = 0,1,2,3), random flip left-right, random flip up-down.
 - **Photometry (discrete):** Brightness add ±0.15 or ±0.05; contrast × 0.85–1.15; saturation × 0.95–1.05; hue ±0.03; then clip to [0, 1].
+```mermaid
 flowchart TB
     subgraph aug["Augmentation pipeline — one image in, one image out"]
         I["Image (normalized 0–1)"]
@@ -91,6 +92,7 @@ flowchart TB
         O["Augmented image"]
     end
     I --> R --> FL --> FU --> BR --> CO --> SA --> HU --> CL --> O
+```
 
 **Schedule:**
 
