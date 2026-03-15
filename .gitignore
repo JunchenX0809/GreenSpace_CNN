@@ -49,3 +49,6 @@ Pipfile.lock
 .DS_Store
 .vscode/
 .idea/
+
+# Claude agent memory (local only, not for version control)
+/memory/
