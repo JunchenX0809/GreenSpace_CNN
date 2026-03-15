@@ -77,6 +77,20 @@ We apply on the fly augmentation to the training stream only, producing one tran
 
 - **Geometry:** Random 90° rotation (k = 0,1,2,3), random flip left-right, random flip up-down.
 - **Photometry (discrete):** Brightness add ±0.15 or ±0.05; contrast × 0.85–1.15; saturation × 0.95–1.05; hue ±0.03; then clip to [0, 1].
+flowchart TB
+    subgraph aug["Augmentation pipeline — one image in, one image out"]
+        I["Image (normalized 0–1)"]
+        R["Rotate 0°, 90°, 180°, or       270°"]
+        FL["Flip left-right (random)"]
+        FU["Flip up-down (random)"]
+        BR["Brightness (: ±0.15 or ±0.05)"]
+        CO["Contrast (× 0.85, 0.95, 1.05, 1.15)"]
+        SA["Saturation (× 0.90, 0.95, 1.05, 1.10)"]
+        HU["Hue (±0.03)"]
+        CL["Clip to 0–1"]
+        O["Augmented image"]
+    end
+    I --> R --> FL --> FU --> BR --> CO --> SA --> HU --> CL --> O
 
 **Schedule:**
 
