@@ -122,7 +122,7 @@ flowchart TB
   | walking_paths | 1750 | 0.064 |
   | multipurpose_open_area | 1853 | 0.062 ← most common, lowest weight |
 
-  Rarest/most-common ratio: **4.7×** (sqrt). More aggressive: `1/n` → 22×. Less aggressive: `1/log(n)` → 1.7×. Tune with `1/n^alpha`, `alpha ∈ (0.5, 1.0)`.
+  Rarest/most-common ratio: **4.7×** (sqrt). More aggressive: `1/n` → 22×. Less aggressive: `1/log(n)` → 1.7×.
 
 - **`SingleClassValWarning` callback (always on):** Fires once at `on_train_begin`. Emits `CRITICAL` if any label is single-class in val; emits `WATCH` for labels under 50 val positives (`gardens` has 32 — currently WATCH).
 - **ModelCheckpoint (PR-AUC):** Save best model by `val_bin_head_weighted_pr_auc` (max), e.g. `best_<run_tag>.keras`.
