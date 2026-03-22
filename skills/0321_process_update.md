@@ -46,12 +46,10 @@ Retrain with updated augmentation (identity values + 3-value params). Comparison
 
 One sample image progressing through all 9 augmentation stations, showing the random parameter drawn at each step.
 
-![Augmentation Pipeline Preview](../data/interim/aug_preview/USA_4812045-0002_1_0-00000_f00_p000_pipeline_preview.png)
+![Augmentation Pipeline Preview](../presentation_visuals_only/aug_previews/USA_4812045-0002_1_0-00000_f00_p000_pipeline_preview.png)
 
 ### 2. Training Curves: Epoch-to-Epoch PR-AUC and MAE
 
 Training and validation PR-AUC and MAE over all epochs, with warmup/finetune boundary and best checkpoint markers.
 
-![Training Curves](../models/runs/20260321_214623/training_curves.png)
-
-> Note: Both images are in gitignored directories. Send to PI separately.
+![Training Curves](../presentation_visuals_only/epoch_visual/training_curves.png)
