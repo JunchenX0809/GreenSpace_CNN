@@ -36,4 +36,22 @@ Retrain with updated augmentation (identity values + 3-value params). Comparison
 | score_mae | -0.5 | +2.5 | -0.5 |
 | veg_mae | -1.2 | +8.7 | -1.8 |
 
-**Conclusion**: NEW MAE is the better overall model. It wins on F1, ROC-AUC, PR-AUC, and veg_mae across splits. The previous best PR-AUC checkpoint only edges ahead on overall_F1@tuned and shade_acc_overall. NEW MAE is selected as the current best checkpoint going forward.
+**Conclusion**: NEW MAE is the better overall model. It wins on F1, ROC-AUC, PR-AUC, and veg_mae across splits. The previous best PR-AUC checkpoint only edges ahead on overall_F1@tuned and shade_acc_overall. 
+
+---
+
+## Presentation Visuals
+
+### 1. Augmentation Pipeline Preview (station-by-station)
+
+One sample image progressing through all 9 augmentation stations, showing the random parameter drawn at each step.
+
+![Augmentation Pipeline Preview](../data/interim/aug_preview/USA_4812045-0002_1_0-00000_f00_p000_pipeline_preview.png)
+
+### 2. Training Curves: Epoch-to-Epoch PR-AUC and MAE
+
+Training and validation PR-AUC and MAE over all epochs, with warmup/finetune boundary and best checkpoint markers.
+
+![Training Curves](../models/runs/20260321_214623/training_curves.png)
+
+> Note: Both images are in gitignored directories. Send to PI separately.
