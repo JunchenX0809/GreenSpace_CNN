@@ -50,5 +50,8 @@ Pipfile.lock
 .vscode/
 .idea/
 
+# inference folder
+predictions/
+
 # Claude agent memory (local only, not for version control)
 /memory/
