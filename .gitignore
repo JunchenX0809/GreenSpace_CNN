@@ -55,3 +55,5 @@ predictions/
 
 # Claude agent memory (local only, not for version control)
 /memory/
+
+/skills/coding_conventions.md
