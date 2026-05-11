@@ -43,3 +43,8 @@ Both checkpoints evaluated through the post-fix NB04 so the new soft-aligned col
 3. **No legacy regression worth reverting.** All seven legacy columns stay inside ±2.1%; closest things to wins are `overall_PR_AUC` (+0.25%) and `score_mae` (−0.72%); biggest legacy loss is `veg_acc` (−2.04%).
 4. **Next Step:** train a soft variant that monitors CE (or a CE-blended combo) for `BestMcMaeCheckpoint` instead of EV-MAE only. That would test whether the CE regression is a checkpoint-selection result vs. a true loss-landscape effect.
 
+    - Continous range prediciton
+    - measure (do we have accuracy or R^2) is R^2 a measurement that can be applied in our context. 
+    - Oversample the two worst performing binary labels. 
+
+
