@@ -65,16 +65,36 @@ def _find_best_epoch(values, mode='max'):
     return (best_idx + 1) if best_idx is not None else None
 
 
-def plot_training_curves(history, warmup_epochs, save_dir=None):
+def plot_training_curves(
+    history,
+    warmup_epochs,
+    save_dir=None,
+    score_val_key=None,
+    score_train_key=None,
+    veg_val_key=None,
+    veg_train_key=None,
+):
     """Plot PR-AUC and MAE training curves with best-checkpoint markers.
 
     Args:
         history: merged history dict (from merge_histories or loaded JSON).
         warmup_epochs: number of warmup epochs (for phase boundary line).
         save_dir: if provided, saves PNGs here.
+        score_val_key, score_train_key, veg_val_key, veg_train_key: optional overrides
+            for Keras history keys (e.g. val_score_head_mae when using regression heads).
     """
     n_epochs = len(next(iter(history.values())))
     epochs = list(range(1, n_epochs + 1))
+
+    keys = dict(METRIC_KEYS)
+    if score_val_key is not None:
+        keys['val_score_mae'] = score_val_key
+    if score_train_key is not None:
+        keys['train_score_mae'] = score_train_key
+    if veg_val_key is not None:
+        keys['val_veg_mae'] = veg_val_key
+    if veg_train_key is not None:
+        keys['train_veg_mae'] = veg_train_key
 
     def _safe_get(key):
         """Get values from history, converting None to NaN for plotting."""
@@ -86,8 +106,8 @@ def plot_training_curves(history, warmup_epochs, save_dir=None):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
     # ---- Panel 1: PR-AUC ----
-    val_pr = _safe_get(METRIC_KEYS['val_pr_auc'])
-    train_pr = _safe_get(METRIC_KEYS['train_pr_auc'])
+    val_pr = _safe_get(keys['val_pr_auc'])
+    train_pr = _safe_get(keys['train_pr_auc'])
 
     if val_pr is not None:
         ax1.plot(epochs, val_pr, label='Val PR-AUC', color='tab:blue', linewidth=1.5)
@@ -108,10 +128,10 @@ def plot_training_curves(history, warmup_epochs, save_dir=None):
     ax1.grid(True, alpha=0.3)
 
     # ---- Panel 2: MAE (score + veg) ----
-    val_score = _safe_get(METRIC_KEYS['val_score_mae'])
-    val_veg = _safe_get(METRIC_KEYS['val_veg_mae'])
-    train_score = _safe_get(METRIC_KEYS['train_score_mae'])
-    train_veg = _safe_get(METRIC_KEYS['train_veg_mae'])
+    val_score = _safe_get(keys['val_score_mae'])
+    val_veg = _safe_get(keys['val_veg_mae'])
+    train_score = _safe_get(keys['train_score_mae'])
+    train_veg = _safe_get(keys['train_veg_mae'])
 
     if val_score is not None:
         ax2.plot(epochs, val_score, label='Val Score MAE', color='tab:orange', linewidth=1.5)

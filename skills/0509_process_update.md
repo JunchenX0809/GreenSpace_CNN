@@ -12,54 +12,48 @@ trajectory so far with score & veg:
 Each step has been a different way to **encode the same rater information**. `score_mean` is literally the expected value of the `score_p_1..5` distribution --> which we already train on in soft mode.
 ---
 
-## Next steps (priority order)
+## Results — Regression + Oversampling (2026-05-11)
 
-### Immdiate (priority)
+Regression heads for score/veg (`Dense(1)`, MAE loss, target = `score_mean`/`veg_mean`) + multi-label oversampling (children_s_playground 20%, water_feature 25%). Run: `20260511_200157/best_mcmae`.
 
-**1. Continuous range (softmax → regression)**
+### Overall metrics (test split, best_mcmae)
 
-**Goal:** Replace (or trial alongside) the **5-way softmax** heads for **score** and **vegetation** with **scalar regression** outputs on a **continuous** scale (e.g. **[1, 5]** with clipping / sensible loss), and compare performance to the current **softmax** (and **soft-target**) setup.
+| Metric | Sparse (0418) | Soft (0503) | Regression+OS (0511) | Sparse→Reg Δ |
+|---|---|---|---|---|
+| **score_mae** | 0.691 | 0.686 | **0.636** | **-8.0%** |
+| **score_mae_mean** | 0.649 | 0.641 | **0.588** | **-9.4%** |
+| **veg_mae** | **0.453** | 0.458 | 0.474 | +4.6% |
+| **veg_mae_mean** | **0.443** | 0.444 | 0.448 | +1.1% |
+| score_acc | 0.493 | 0.488 | **0.510** | +3.4% |
+| veg_acc | **0.636** | 0.623 | 0.631 | -0.8% |
+| overall PR_AUC | 0.797 | 0.799 | **0.811** | **+1.8%** |
+| overall F1@tuned | 0.743 | 0.734 | **0.757** | **+1.9%** |
+| shade_acc_overall | 0.607 | 0.604 | **0.619** | +2.0% |
 
-**Open items (for a later plan):** target (`score_mean` / `veg_mean` vs EV of soft bins), loss (MAE vs Huber vs MSE), metrics (\(R^2\), MAE vs means, optional bucketed accuracy), and how this interacts with **McMAE / checkpoint** selection.
+### Per-label binary head (test split, Sparse → Regression+OS)
 
-**2. Oversampling**
+| Label | Sparse F1 | Reg+OS F1 | Δ | Sparse PR_AUC | Reg+OS PR_AUC | Δ |
+|---|---|---|---|---|---|---|
+| water_feature | 0.490 | **0.581** | **+0.091** | 0.620 | **0.648** | **+0.028** |
+| children_s_playground | 0.340 | **0.398** | **+0.058** | 0.440 | **0.464** | **+0.024** |
+| sports_field | 0.770 | **0.810** | **+0.040** | 0.870 | **0.904** | **+0.034** |
+| parking_lots | 0.730 | **0.767** | **+0.037** | 0.840 | 0.840 | 0.000 |
+| Top 3 labels | ~0.89 avg | ~0.88 avg | flat | ~0.94 avg | ~0.94 avg | flat |
 
-**Phase A — binary head:** Start by **oversampling** the binary label with the **lowest positive support** (train stream only). Measure impact on **that label** and on **overall** multi-task stability.
+### Takeaway
 
-**Phase B — ordinal heads (conditional):** If Phase A helps without hurting the rest of the model, extend oversampling ideas to **score** and **veg** (e.g. emphasis on **rare ordinal bins** or hard examples — exact rule **TBD**).
-
----
-
-### Follow-up experiments (to address overfitting)
-
-Both approaches below target the same root cause — the ~3x train→val loss gap on score/veg heads, which suggests the model memorizes training data instead of learning generalizable features. They can be combined and tested independently.
-
-**3. Regularization (score & veg overfitting)**
-
-**Goal:** Close the train/val gap so that improvements during training actually transfer to unseen data.
-
-Two concrete options to try:
-
-- **Dropout before score/veg heads:** Add a `Dropout(0.3)` layer immediately before each `Dense` head (score and veg only). This forces the network to spread its learning across more features instead of relying on a few memorized patterns. Implementation: in NB03's model-build cell, insert `x_score = layers.Dropout(0.3)(x)` before `score_out = layers.Dense(...)`, same for veg. Start with 0.3, tune up/down based on whether the train/val gap narrows.
-
-- **Label smoothing:** When using soft CE loss, mix a small uniform component into the target distribution — e.g. `target = 0.9 * soft_probs + 0.1 * (1/5)`. Prevents the model from becoming overconfident on any single class. Implementation: a one-line change in `make_unbatched_ds` where `y_score` is built for soft mode.
-
-**4. Freeze strategy (backbone fine-tuning depth)**
-
-**Goal:** Unfreeze only the last N layers of the backbone (e.g. last 20–40 layers) instead of all ~240. The binary heads generalize well (train/val ratio ~1.15x), but the ordinal heads don't — suggesting the full unfreeze causes the backbone to overfit to score/veg training signal. Keeping early layers frozen preserves general visual features while still allowing top-layer adaptation.
-
-**Implementation:** In NB03's unfreeze cell, replace `base.trainable = True` with a loop that keeps early layers frozen: `for layer in base.layers[:-N]: layer.trainable = False`. Start with N=30 and compare the train/val gap.
+- **Sparse → Soft was a wash** (all metrics within ±2%).
+- **Regression + oversampling delivered clear gains**: score MAE down 8–9%, binary F1 up across all weak labels, shade improved as side effect.
+- **One trade-off**: veg MAE slightly regressed (+4.6%) — veg was already well-calibrated under softmax.
+- **children_s_playground** improved but remains the weakest label (0.398 F1, 0.464 PR_AUC).
 
 ---
 
-## Summary
+## Next steps
 
-| # | Approach | Source | What it targets |
-|---|---|---|---|
-| 1 | **Continuous range** (regression heads) | Immediate Next | Test if scalar targets improve score/veg over softmax |
-| 2 | **Oversampling** | Immediate Next | Improve underrepresented labels |
-| 3 | **Regularization** (dropout, label smoothing) | Suggested | Narrows the 3x train/val gap (memorization) |
-| 4 | **Freeze strategy** (partial backbone unfreeze) | Suggested | Prevents backbone from overfitting to ordinal signal |
+**1. Regularization** — Add `Dropout(0.3)` before score/veg heads to narrow the ~3x train/val gap. Optionally try label smoothing on the binary head. Tune dropout rate based on val gap.
+
+**2. Freeze strategy** — Partial backbone unfreeze (last ~30 layers instead of all ~240) to prevent the backbone from overfitting to ordinal signal while preserving general visual features.
 
 ---
 
