@@ -26,6 +26,14 @@ METRIC_KEYS = {
     'train_veg_mae': 'veg_head_veg_ev_mae',
 }
 
+# Regression-mode fallbacks (Dense(1) MAE keys logged by Keras)
+_REGRESSION_FALLBACKS = {
+    'val_score_mae': 'val_score_head_mae',
+    'train_score_mae': 'score_head_mae',
+    'val_veg_mae': 'val_veg_head_mae',
+    'train_veg_mae': 'veg_head_mae',
+}
+
 
 def merge_histories(hist_warmup, hist_finetune):
     """Concatenate two Keras History.history dicts into one continuous timeline.
@@ -96,6 +104,11 @@ def plot_training_curves(
     if veg_train_key is not None:
         keys['train_veg_mae'] = veg_train_key
 
+    # Auto-detect regression keys when EV-MAE keys are missing
+    for logical, fallback in _REGRESSION_FALLBACKS.items():
+        if keys[logical] not in history and fallback in history:
+            keys[logical] = fallback
+
     def _safe_get(key):
         """Get values from history, converting None to NaN for plotting."""
         vals = history.get(key)
@@ -154,9 +167,21 @@ def plot_training_curves(
             ax2.plot(best_ep, val_veg[best_ep - 1], '*', color='tab:green', markersize=14,
                      label=f'Best mc_mae (epoch {best_ep})')
 
+    # Cap y-axis using converged range (second half) to exclude early spikes
+    second_half_vals = []
+    for series in [val_score, val_veg, train_score, train_veg]:
+        if series is not None:
+            half = len(series) // 2
+            second_half_vals.extend(v for v in series[half:] if not math.isnan(v))
+    if second_half_vals:
+        ax2.set_ylim(0, max(second_half_vals) * 3)
+
+    is_regression = any(k in history for k in _REGRESSION_FALLBACKS.values())
+    mae_label = 'MAE' if is_regression else 'Expected-Value MAE'
+
     ax2.axvline(x=warmup_epochs + 0.5, color='gray', linestyle=':', alpha=0.7)
     ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Expected-Value MAE')
+    ax2.set_ylabel(mae_label)
     ax2.set_title('Multi-Class Heads — Score & Vegetation MAE')
     ax2.legend(loc='upper right', fontsize=9)
     ax2.grid(True, alpha=0.3)
