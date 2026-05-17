@@ -57,5 +57,8 @@ predictions/
 /memory/
 
 /skills/coding_conventions.md
+# Local label-method notes (versioned drafts; not tracked)
+/skills/Labels_Processing_Method_v*.md
 /.cursor
 .claude/
+
