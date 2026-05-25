@@ -36,7 +36,7 @@ EXPERIMENT_CONFIG = {
     # Head modes — one of: 'sparse', 'soft', 'regression'
     # 'sparse': hard int labels (score_class), sparse CE, Dense(5, softmax)
     # 'soft':   prob vectors (score_p_1..5), CE, Dense(5, softmax)
-    # 'regression': score_mean / veg_mean, MAE, Dense(1, linear)
+    # 'regression': score_mean / veg_mean, MAE, Dense(1, sigmoid) scaled to [1, 5]
     'score_head_mode': 'regression',
     'veg_head_mode': 'regression',
     # Binary label exclusion — column names to drop from binary head. [] to include all.
@@ -47,6 +47,13 @@ EXPERIMENT_CONFIG = {
     {'label': 'children_s_playground_p', 'target_rate': 0.20, 'pos_threshold': 0.50},
     {'label': 'water_feature_p',         'target_rate': 0.25, 'pos_threshold': 0.50},
 ],
+    # Training control — keep smoke/full-run and backbone fine-tuning decisions centralized.
+    'test_run_mode': False,
+    'test_warmup_epochs': 1,
+    'test_finetune_epochs': 1,
+    'epochs_warmup': 5,
+    'epochs_finetune': 100,
+    'fine_tune_backbone': True,
 }
 
 
@@ -69,7 +76,8 @@ HEAD_PRESETS = {
     },
     'regression': {
         'units': 1,
-        'activation': None,
+        'activation': 'sigmoid',
+        'output_range': (1.0, 5.0),
         'loss': 'mae',
         'accuracy': None,
         'use_ev_mae': False,
