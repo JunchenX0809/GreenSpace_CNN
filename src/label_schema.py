@@ -54,6 +54,8 @@ EXPERIMENT_CONFIG = {
     'epochs_warmup': 5,
     'epochs_finetune': 100,
     'fine_tune_backbone': True,
+    'fine_tune_backbone_prefixes': ['block6d', 'block7a', 'top_'],
+    'freeze_batch_norm_during_partial_finetune': True,
 }
 
 

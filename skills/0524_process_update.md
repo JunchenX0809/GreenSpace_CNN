@@ -63,3 +63,32 @@ Small regressions:
 - `walking_paths`: PR-AUC `+0.007`, but tuned F1 `-0.013`
 
 Interpretation: corrected full unfreeze restores performance to the May 11 level and slightly improves several test metrics, especially vegetation MAE. Use this as the current baseline before testing partial unfreeze.
+
+## Partial-Unfreeze Result
+
+Run `20260525_220942` tested partial unfreeze with `block6d`, `block7a`, and `top_` trainable while BatchNorm stayed frozen. The run executed as intended, but performance regressed sharply versus corrected full unfreeze.
+
+| Metric | Partial `20260525_220942` | Full unfreeze `20260524_220623` | Delta |
+| --- | ---: | ---: | ---: |
+| Overall PR-AUC | `0.434` | `0.817` | `-0.383` |
+| Overall ROC-AUC | `0.531` | `0.912` | `-0.380` |
+| Overall tuned F1 | `0.545` | `0.758` | `-0.212` |
+| Score MAE mean | `1.113` | `0.583` | `+0.530` |
+| Veg MAE mean | `0.941` | `0.425` | `+0.516` |
+
+Per-label pattern:
+
+Largest PR-AUC drops:
+
+- `sports_field`: `-0.593`
+- `parking_lots`: `-0.499`
+- `built_structures`: `-0.435`
+- `water_feature`: `-0.391`
+- `children_s_playground`: `-0.350`
+
+High-prevalence labels also deteriorated:
+
+- `walking_paths`: PR-AUC `-0.236`
+- `multipurpose_open_area`: PR-AUC `-0.174`
+
+Preliminary interpretation: this narrow partial-unfreeze cut is too constrained and behaves closer to the heads-only underfit run than to full unfreeze. Do not keep this exact partial strategy; use corrected full unfreeze as the current TensorFlow/EfficientNet baseline, or only test a wider partial cut if another ablation is needed.
