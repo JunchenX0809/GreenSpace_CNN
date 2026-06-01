@@ -86,6 +86,15 @@ def make_optimizer(model: Any, lr: float = TORCH_TRAINING_SMOKE_CONFIG["learning
     return torch.optim.Adam(params, lr=lr)
 
 
+def _get_optimizer_lr(optimizer: Any) -> float:
+    return float(optimizer.param_groups[0]["lr"])
+
+
+def _set_optimizer_lr(optimizer: Any, lr: float) -> None:
+    for group in optimizer.param_groups:
+        group["lr"] = float(lr)
+
+
 def resolve_device(device: str = TORCH_TRAINING_CONFIG["device"]) -> Any:
     """Resolve configured train device."""
 
@@ -227,6 +236,148 @@ def weighted_macro_pr_auc(
     return {"value": value, "valid_labels": len(ap_vals), "per_label": per_label}
 
 
+def compute_training_combo(
+    val_metrics: dict[str, Any],
+    w_bin: float = 0.5,
+    w_ord: float = 0.5,
+    mae_scale: float = 2.0,
+) -> dict[str, float]:
+    """Mirror TensorFlow `ValComboTrainingMetric` for training control."""
+
+    pr_auc = val_metrics.get("metric_bin_head_weighted_pr_auc")
+    if pr_auc is None or not np.isfinite(float(pr_auc)):
+        return {}
+
+    score_mae = val_metrics.get("metric_score_mae")
+    veg_mae = val_metrics.get("metric_veg_mae")
+    if score_mae is None or veg_mae is None:
+        return {"training_combo": float(pr_auc)}
+
+    mc_mae = (float(score_mae) + float(veg_mae)) / 2.0
+    ord_term = max(0.0, 1.0 - min(mc_mae / max(float(mae_scale), 1e-8), 1.0))
+    combo = float(w_bin) * float(pr_auc) + float(w_ord) * ord_term
+    return {
+        "training_combo": combo,
+        "training_combo_mcmae": mc_mae,
+        "training_combo_ord_term": ord_term,
+    }
+
+
+class PlateauTrainingControl:
+    """PyTorch equivalent of EarlyStopping + ReduceLROnPlateau on one max metric."""
+
+    def __init__(
+        self,
+        monitor: str,
+        early_patience: int = 10,
+        reduce_lr_patience: int = 2,
+        reduce_lr_factor: float = 0.5,
+        reduce_lr_min_delta: float = 1e-4,
+        restore_best_weights: bool = True,
+    ) -> None:
+        self.monitor = monitor
+        self.early_patience = int(early_patience)
+        self.reduce_lr_patience = int(reduce_lr_patience)
+        self.reduce_lr_factor = float(reduce_lr_factor)
+        self.reduce_lr_min_delta = float(reduce_lr_min_delta)
+        self.restore_best_weights = bool(restore_best_weights)
+        self.best = float("-inf")
+        self.wait = 0
+        self.lr_wait = 0
+        self.lr_best = float("-inf")
+        self.best_state_dict = None
+        self.best_epoch = None
+
+    def update(self, model: Any, optimizer: Any, epoch: int, logs: dict[str, Any]) -> bool:
+        torch = _require_torch()
+        current = logs.get(self.monitor)
+        if current is None or not np.isfinite(float(current)):
+            print(f"[TrainingControl] Missing {self.monitor} at epoch {epoch}; skipping LR/early-stopping check.")
+            return False
+
+        current = float(current)
+        if current > self.best:
+            self.best = current
+            self.wait = 0
+            self.lr_wait = 0
+            self.best_epoch = int(epoch)
+            if self.restore_best_weights:
+                self.best_state_dict = {
+                    name: tensor.detach().cpu().clone()
+                    for name, tensor in model.state_dict().items()
+                }
+        else:
+            self.wait += 1
+
+        if current > self.lr_best + self.reduce_lr_min_delta:
+            self.lr_best = current
+            self.lr_wait = 0
+            return False
+
+        self.lr_wait += 1
+        if self.lr_wait >= self.reduce_lr_patience:
+            old_lr = _get_optimizer_lr(optimizer)
+            new_lr = old_lr * self.reduce_lr_factor
+            _set_optimizer_lr(optimizer, new_lr)
+            self.lr_wait = 0
+            print(
+                f"[ReduceLROnPlateau] Epoch {epoch}: reducing learning rate "
+                f"from {old_lr:.6g} to {new_lr:.6g}; {self.monitor}={current:.4f}, best={self.best:.4f}"
+            )
+
+        if self.wait >= self.early_patience:
+            print(
+                f"[EarlyStopping] Stopping training at epoch {epoch}: "
+                f"{self.monitor}={current:.4f}, best={self.best:.4f}, patience={self.early_patience}"
+            )
+            return True
+        return False
+
+    def restore(self, model: Any, device: Any) -> None:
+        if self.restore_best_weights and self.best_state_dict is not None:
+            model.load_state_dict({name: tensor.to(device) for name, tensor in self.best_state_dict.items()})
+            print(f"[EarlyStopping] Restored best weights from epoch {self.best_epoch}.")
+
+
+class MaeGuardrailControl:
+    """Fine-tune-only MAE guardrail matching TensorFlow `MaeGuardrail`."""
+
+    def __init__(self, mae_delta: float = 0.05, mae_patience: int = 10) -> None:
+        self.mae_delta = float(mae_delta)
+        self.mae_patience = int(mae_patience)
+        self.best_mc_mae = float("inf")
+        self.bad_epochs = 0
+
+    def update(self, epoch: int, logs: dict[str, Any]) -> bool:
+        score_mae = logs.get("metric_score_mae")
+        veg_mae = logs.get("metric_veg_mae")
+        if score_mae is None or veg_mae is None:
+            print(f"[MaeGuardrail] Missing score/veg MAE at epoch {epoch}; skipping guardrail check.")
+            return False
+
+        mc_mae = (float(score_mae) + float(veg_mae)) / 2.0
+        if mc_mae < self.best_mc_mae:
+            self.best_mc_mae = mc_mae
+            self.bad_epochs = 0
+            return False
+
+        if mc_mae > (self.best_mc_mae + self.mae_delta):
+            self.bad_epochs += 1
+        else:
+            self.bad_epochs = 0
+
+        if self.bad_epochs >= self.mae_patience:
+            pr_auc = logs.get("metric_bin_head_weighted_pr_auc", float("nan"))
+            print(
+                "[MaeGuardrail] Stopping training: "
+                f"metric_bin_head_weighted_pr_auc={float(pr_auc):.4f}, mc_mae={mc_mae:.4f}, "
+                f"best_mc_mae={self.best_mc_mae:.4f}, delta={self.mae_delta:.4f}, "
+                f"patience={self.mae_patience}"
+            )
+            return True
+        return False
+
+
 def train_one_epoch(
     model: Any,
     loader: Any,
@@ -346,6 +497,23 @@ def run_persistent_warmup_finetune(
     print(f"test_run_mode={test_run_mode} -> warmup={warmup_epochs}, finetune={finetune_epochs}")
     print(f"batch caps: train={max_train_batches}, val={max_val_batches}")
     print("oversampling plan:", oversampling_plan.summary() if oversampling_plan else None)
+    monitor_name = "training_combo" if bool(cfg["use_combo_training_control"]) else "metric_bin_head_weighted_pr_auc"
+    print(
+        "training control:",
+        {
+            "monitor": f"val_{monitor_name}",
+            "mode": "max",
+            "early_stopping_patience": int(cfg["early_stopping_patience"]),
+            "restore_best_weights": bool(cfg["restore_best_weights"]),
+            "reduce_lr_factor": float(cfg["reduce_lr_factor"]),
+            "reduce_lr_patience": int(cfg["reduce_lr_patience"]),
+            "reduce_lr_min_delta": float(cfg["reduce_lr_min_delta"]),
+            "fine_tune_mae_guardrail": {
+                "delta": float(cfg["mae_guardrail_delta"]),
+                "patience": int(cfg["mae_guardrail_patience"]),
+            },
+        },
+    )
 
     best_mcmae = float("inf")
     best_prauc = float("-inf")
@@ -371,6 +539,7 @@ def run_persistent_warmup_finetune(
         "finetune_epochs": finetune_epochs,
         "test_run_mode": test_run_mode,
         "fine_tune_backbone": bool(cfg["fine_tune_backbone"]),
+        "training_control_monitor": f"val_{monitor_name}",
         "use_oversampling": bool(TORCH_DATA_CONFIG["use_oversampling"]),
         "use_augmentation": bool(TORCH_DATA_CONFIG["use_augmentation"]),
     }
@@ -380,6 +549,14 @@ def run_persistent_warmup_finetune(
     set_backbone_trainable(model, False)
     print("Warm-up trainable summary:", trainable_parameter_summary(model))
     warmup_optimizer = make_optimizer(model, lr=float(cfg["warmup_learning_rate"]))
+    warmup_control = PlateauTrainingControl(
+        monitor=monitor_name,
+        early_patience=int(cfg["early_stopping_patience"]),
+        reduce_lr_patience=int(cfg["reduce_lr_patience"]),
+        reduce_lr_factor=float(cfg["reduce_lr_factor"]),
+        reduce_lr_min_delta=float(cfg["reduce_lr_min_delta"]),
+        restore_best_weights=bool(cfg["restore_best_weights"]),
+    )
     for _ in range(warmup_epochs):
         global_epoch += 1
         train_metrics = train_one_epoch(
@@ -399,8 +576,23 @@ def run_persistent_warmup_finetune(
             eval_df=val_df,
             max_batches=max_val_batches,
         )
+        if bool(cfg["use_combo_training_control"]):
+            val_metrics.update(
+                compute_training_combo(
+                    val_metrics,
+                    w_bin=float(cfg["combo_w_bin"]),
+                    w_ord=float(cfg["combo_w_ord"]),
+                    mae_scale=float(cfg["combo_mcmae_scale"]),
+                )
+            )
         _append_history(history, "warmup", global_epoch, train_metrics, val_metrics)
-        print(f"warmup epoch {global_epoch}: train_loss={train_metrics['loss_total']:.4f} val_loss={val_metrics['loss_total']:.4f}")
+        print(
+            f"warmup epoch {global_epoch}: "
+            f"train_loss={train_metrics['loss_total']:.4f} "
+            f"val_loss={val_metrics['loss_total']:.4f} "
+            f"val_{monitor_name}={float(val_metrics.get(monitor_name, float('nan'))):.4f} "
+            f"lr={_get_optimizer_lr(warmup_optimizer):.6g}"
+        )
 
         val_mcmae = float(val_metrics["metric_score_veg_mae_mean"])
         if val_mcmae < best_mcmae:
@@ -429,9 +621,25 @@ def run_persistent_warmup_finetune(
                 model_config=model_config,
             )
 
+        if warmup_control.update(model, warmup_optimizer, global_epoch, val_metrics):
+            break
+    warmup_control.restore(model, device)
+
     set_backbone_trainable(model, bool(cfg["fine_tune_backbone"]))
     print("Fine-tune trainable summary:", trainable_parameter_summary(model))
     finetune_optimizer = make_optimizer(model, lr=float(cfg["finetune_learning_rate"]))
+    finetune_control = PlateauTrainingControl(
+        monitor=monitor_name,
+        early_patience=int(cfg["early_stopping_patience"]),
+        reduce_lr_patience=int(cfg["reduce_lr_patience"]),
+        reduce_lr_factor=float(cfg["reduce_lr_factor"]),
+        reduce_lr_min_delta=float(cfg["reduce_lr_min_delta"]),
+        restore_best_weights=bool(cfg["restore_best_weights"]),
+    )
+    mae_guardrail = MaeGuardrailControl(
+        mae_delta=float(cfg["mae_guardrail_delta"]),
+        mae_patience=int(cfg["mae_guardrail_patience"]),
+    )
     for _ in range(finetune_epochs):
         global_epoch += 1
         train_metrics = train_one_epoch(
@@ -451,8 +659,23 @@ def run_persistent_warmup_finetune(
             eval_df=val_df,
             max_batches=max_val_batches,
         )
+        if bool(cfg["use_combo_training_control"]):
+            val_metrics.update(
+                compute_training_combo(
+                    val_metrics,
+                    w_bin=float(cfg["combo_w_bin"]),
+                    w_ord=float(cfg["combo_w_ord"]),
+                    mae_scale=float(cfg["combo_mcmae_scale"]),
+                )
+            )
         _append_history(history, "finetune", global_epoch, train_metrics, val_metrics)
-        print(f"finetune epoch {global_epoch}: train_loss={train_metrics['loss_total']:.4f} val_loss={val_metrics['loss_total']:.4f}")
+        print(
+            f"finetune epoch {global_epoch}: "
+            f"train_loss={train_metrics['loss_total']:.4f} "
+            f"val_loss={val_metrics['loss_total']:.4f} "
+            f"val_{monitor_name}={float(val_metrics.get(monitor_name, float('nan'))):.4f} "
+            f"lr={_get_optimizer_lr(finetune_optimizer):.6g}"
+        )
 
         val_mcmae = float(val_metrics["metric_score_veg_mae_mean"])
         if val_mcmae < best_mcmae:
@@ -480,6 +703,12 @@ def run_persistent_warmup_finetune(
                 metrics=val_metrics,
                 model_config=model_config,
             )
+
+        stop_for_plateau = finetune_control.update(model, finetune_optimizer, global_epoch, val_metrics)
+        stop_for_guardrail = mae_guardrail.update(global_epoch, val_metrics)
+        if stop_for_plateau or stop_for_guardrail:
+            break
+    finetune_control.restore(model, device)
 
     save_checkpoint(
         final_path,
