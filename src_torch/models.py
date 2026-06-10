@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src_torch.config import TORCH_MODEL_CONFIG
+from src_torch.config import TORCH_DATA_CONFIG, TORCH_MODEL_CONFIG
 
 
 def _require_torch() -> Any:
@@ -40,6 +40,25 @@ def resolve_resnet50_weight(weight_name: str = TORCH_MODEL_CONFIG["torchgeo_weig
         raise ValueError(f"Unknown ResNet50 weight: {weight_name!r}") from exc
 
 
+def _build_backbone_preprocess(weight: Any, preserve_input_resolution: bool) -> Any:
+    """Return the official weight transform, optionally without its resize."""
+
+    torch = _require_torch()
+    official_preprocess = weight.transforms
+    if not preserve_input_resolution:
+        return official_preprocess
+
+    from torchvision.transforms.v2 import Resize
+
+    transforms = list(official_preprocess.children())
+    if not transforms or not isinstance(transforms[0], Resize):
+        raise ValueError(
+            "Cannot preserve input resolution safely: the configured TorchGeo "
+            "weight transform does not begin with a Resize operation."
+        )
+    return torch.nn.Sequential(*transforms[1:])
+
+
 class GreenSpaceTorchGeoResNet50(_require_torch().nn.Module):
     """TorchGeo ResNet-50 backbone with GreenSpace multi-task heads."""
 
@@ -47,6 +66,8 @@ class GreenSpaceTorchGeoResNet50(_require_torch().nn.Module):
         self,
         weight_name: str = TORCH_MODEL_CONFIG["torchgeo_weight"],
         load_pretrained_weights: bool = TORCH_MODEL_CONFIG["load_pretrained_weights"],
+        preserve_input_resolution: bool = TORCH_MODEL_CONFIG["preserve_input_resolution"],
+        input_size: tuple[int, int] = TORCH_DATA_CONFIG["img_size"],
         num_binary: int = TORCH_MODEL_CONFIG["num_binary"],
         num_shade: int = TORCH_MODEL_CONFIG["num_shade"],
         score_output_range: tuple[float, float] = TORCH_MODEL_CONFIG["score_output_range"],
@@ -58,7 +79,13 @@ class GreenSpaceTorchGeoResNet50(_require_torch().nn.Module):
         self.weight = resolve_resnet50_weight(weight_name)
         self.weight_name = weight_name
         self.load_pretrained_weights = load_pretrained_weights
-        self.backbone_preprocess = self.weight.transforms
+        self.preserve_input_resolution = preserve_input_resolution
+        self.input_size = input_size
+        self.official_backbone_preprocess = self.weight.transforms
+        self.backbone_preprocess = _build_backbone_preprocess(
+            self.weight,
+            preserve_input_resolution=preserve_input_resolution,
+        )
         self.backbone = resnet50(
             weights=self.weight if load_pretrained_weights else None,
             num_classes=0,
@@ -100,17 +127,27 @@ class GreenSpaceTorchGeoResNet50(_require_torch().nn.Module):
             "model_name": TORCH_MODEL_CONFIG["torchgeo_model_name"],
             "weight_name": self.weight_name,
             "load_pretrained_weights": self.load_pretrained_weights,
+            "preserve_input_resolution": self.preserve_input_resolution,
+            "requested_input_size": self.input_size,
             "weight_meta": dict(self.weight.meta),
-            "weight_transforms": repr(self.weight.transforms),
+            "weight_transforms": repr(self.official_backbone_preprocess),
+            "official_weight_transforms": repr(self.official_backbone_preprocess),
+            "effective_weight_transforms": repr(self.backbone_preprocess),
         }
 
 
 def build_torchgeo_resnet50_forward_model(
     load_pretrained_weights: bool = TORCH_MODEL_CONFIG["load_pretrained_weights"],
+    preserve_input_resolution: bool = TORCH_MODEL_CONFIG["preserve_input_resolution"],
+    input_size: tuple[int, int] = TORCH_DATA_CONFIG["img_size"],
 ) -> GreenSpaceTorchGeoResNet50:
     """Build the configured TorchGeo ResNet-50 model for one-batch smoke tests."""
 
-    return GreenSpaceTorchGeoResNet50(load_pretrained_weights=load_pretrained_weights)
+    return GreenSpaceTorchGeoResNet50(
+        load_pretrained_weights=load_pretrained_weights,
+        preserve_input_resolution=preserve_input_resolution,
+        input_size=input_size,
+    )
 
 
 def output_summary(outputs: dict[str, Any]) -> dict[str, dict[str, Any]]:

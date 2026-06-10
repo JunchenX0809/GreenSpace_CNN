@@ -29,6 +29,7 @@ TORCH_MODEL_CONFIG = {
     "torchgeo_model_name": "resnet50",
     "torchgeo_weight": "ResNet50_Weights.FMOW_RGB_GASSL",
     "load_pretrained_weights": True,
+    "preserve_input_resolution": True,
     "fallback_backbone": "torchvision",
     "num_binary": 7,
     "num_shade": 2,

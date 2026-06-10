@@ -84,8 +84,13 @@ def load_torch_checkpoint_model(model_path: str | Path, device: Any | None = Non
 
     model_config = json.loads(config_path.read_text())
     device = device or resolve_device("auto")
+    torch_model_config = model_config.get("torch_model_config", {})
+    torch_data_config = model_config.get("torch_data_config", {})
+    saved_img_size = tuple(torch_data_config.get("img_size", model_config.get("img_size", (512, 512))))
     model = build_torchgeo_resnet50_forward_model(
-        load_pretrained_weights=bool(model_config.get("torch_model_config", {}).get("load_pretrained_weights", True))
+        load_pretrained_weights=bool(torch_model_config.get("load_pretrained_weights", True)),
+        preserve_input_resolution=bool(torch_model_config.get("preserve_input_resolution", False)),
+        input_size=saved_img_size,
     )
     checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])

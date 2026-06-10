@@ -480,7 +480,11 @@ def run_persistent_warmup_finetune(
     )
     val_loader = make_eval_dataloader("val", batch_size=batch_size, image_transform="rgb_255")
 
-    model = build_torchgeo_resnet50_forward_model(load_pretrained_weights=TORCH_MODEL_CONFIG["load_pretrained_weights"])
+    model = build_torchgeo_resnet50_forward_model(
+        load_pretrained_weights=TORCH_MODEL_CONFIG["load_pretrained_weights"],
+        preserve_input_resolution=TORCH_MODEL_CONFIG["preserve_input_resolution"],
+        input_size=TORCH_DATA_CONFIG["img_size"],
+    )
     model.to(device)
 
     test_run_mode = bool(cfg["test_run_mode"])
@@ -496,6 +500,16 @@ def run_persistent_warmup_finetune(
     print(f"device: {device}")
     print(f"test_run_mode={test_run_mode} -> warmup={warmup_epochs}, finetune={finetune_epochs}")
     print(f"batch caps: train={max_train_batches}, val={max_val_batches}")
+    print(
+        "image preprocessing:",
+        {
+            "dataset_image_size": TORCH_DATA_CONFIG["img_size"],
+            "backbone_input_size": TORCH_DATA_CONFIG["img_size"]
+            if TORCH_MODEL_CONFIG["preserve_input_resolution"]
+            else (224, 224),
+            "official_resize_bypassed": bool(TORCH_MODEL_CONFIG["preserve_input_resolution"]),
+        },
+    )
     print("oversampling plan:", oversampling_plan.summary() if oversampling_plan else None)
     monitor_name = "training_combo" if bool(cfg["use_combo_training_control"]) else "metric_bin_head_weighted_pr_auc"
     print(
