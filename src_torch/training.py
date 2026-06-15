@@ -19,7 +19,7 @@ from src_torch.config import (
 )
 from src_torch.data import load_split_df, make_eval_dataloader, make_train_dataloader, resolve_split_schema
 from src_torch.losses import compute_one_batch_diagnostics
-from src_torch.models import build_torchgeo_resnet50_forward_model
+from src_torch.models import build_torchgeo_model
 
 
 def _require_torch() -> Any:
@@ -270,6 +270,7 @@ class PlateauTrainingControl:
         self,
         monitor: str,
         early_patience: int = 10,
+        early_min_delta: float = 0.0,
         reduce_lr_patience: int = 2,
         reduce_lr_factor: float = 0.5,
         reduce_lr_min_delta: float = 1e-4,
@@ -277,6 +278,7 @@ class PlateauTrainingControl:
     ) -> None:
         self.monitor = monitor
         self.early_patience = int(early_patience)
+        self.early_min_delta = float(early_min_delta)
         self.reduce_lr_patience = int(reduce_lr_patience)
         self.reduce_lr_factor = float(reduce_lr_factor)
         self.reduce_lr_min_delta = float(reduce_lr_min_delta)
@@ -296,7 +298,7 @@ class PlateauTrainingControl:
             return False
 
         current = float(current)
-        if current > self.best:
+        if current > self.best + self.early_min_delta:
             self.best = current
             self.wait = 0
             self.lr_wait = 0
@@ -328,7 +330,8 @@ class PlateauTrainingControl:
         if self.wait >= self.early_patience:
             print(
                 f"[EarlyStopping] Stopping training at epoch {epoch}: "
-                f"{self.monitor}={current:.4f}, best={self.best:.4f}, patience={self.early_patience}"
+                f"{self.monitor}={current:.4f}, best={self.best:.4f}, "
+                f"min_delta={self.early_min_delta:.4f}, patience={self.early_patience}"
             )
             return True
         return False
@@ -480,7 +483,9 @@ def run_persistent_warmup_finetune(
     )
     val_loader = make_eval_dataloader("val", batch_size=batch_size, image_transform="rgb_255")
 
-    model = build_torchgeo_resnet50_forward_model(
+    model = build_torchgeo_model(
+        model_name=TORCH_MODEL_CONFIG["torchgeo_model_name"],
+        weight_name=TORCH_MODEL_CONFIG["torchgeo_weight"],
         load_pretrained_weights=TORCH_MODEL_CONFIG["load_pretrained_weights"],
         preserve_input_resolution=TORCH_MODEL_CONFIG["preserve_input_resolution"],
         input_size=TORCH_DATA_CONFIG["img_size"],
@@ -500,16 +505,7 @@ def run_persistent_warmup_finetune(
     print(f"device: {device}")
     print(f"test_run_mode={test_run_mode} -> warmup={warmup_epochs}, finetune={finetune_epochs}")
     print(f"batch caps: train={max_train_batches}, val={max_val_batches}")
-    print(
-        "image preprocessing:",
-        {
-            "dataset_image_size": TORCH_DATA_CONFIG["img_size"],
-            "backbone_input_size": TORCH_DATA_CONFIG["img_size"]
-            if TORCH_MODEL_CONFIG["preserve_input_resolution"]
-            else (224, 224),
-            "official_resize_bypassed": bool(TORCH_MODEL_CONFIG["preserve_input_resolution"]),
-        },
-    )
+    print("model metadata:", model.metadata())
     print("oversampling plan:", oversampling_plan.summary() if oversampling_plan else None)
     monitor_name = "training_combo" if bool(cfg["use_combo_training_control"]) else "metric_bin_head_weighted_pr_auc"
     print(
@@ -518,6 +514,7 @@ def run_persistent_warmup_finetune(
             "monitor": f"val_{monitor_name}",
             "mode": "max",
             "early_stopping_patience": int(cfg["early_stopping_patience"]),
+            "early_stopping_min_delta": float(cfg["early_stopping_min_delta"]),
             "restore_best_weights": bool(cfg["restore_best_weights"]),
             "reduce_lr_factor": float(cfg["reduce_lr_factor"]),
             "reduce_lr_patience": int(cfg["reduce_lr_patience"]),
@@ -539,7 +536,7 @@ def run_persistent_warmup_finetune(
     model_config = {
         "run_tag": run_tag,
         "framework": "pytorch",
-        "model_family": "TorchGeo ResNet-50",
+        "model_family": f"TorchGeo {TORCH_MODEL_CONFIG['torchgeo_model_name']}",
         "model_metadata": model.metadata(),
         "img_size": TORCH_DATA_CONFIG["img_size"],
         "binary_cols": schema.binary_cols,
@@ -566,6 +563,7 @@ def run_persistent_warmup_finetune(
     warmup_control = PlateauTrainingControl(
         monitor=monitor_name,
         early_patience=int(cfg["early_stopping_patience"]),
+        early_min_delta=float(cfg["early_stopping_min_delta"]),
         reduce_lr_patience=int(cfg["reduce_lr_patience"]),
         reduce_lr_factor=float(cfg["reduce_lr_factor"]),
         reduce_lr_min_delta=float(cfg["reduce_lr_min_delta"]),
@@ -645,6 +643,7 @@ def run_persistent_warmup_finetune(
     finetune_control = PlateauTrainingControl(
         monitor=monitor_name,
         early_patience=int(cfg["early_stopping_patience"]),
+        early_min_delta=float(cfg["early_stopping_min_delta"]),
         reduce_lr_patience=int(cfg["reduce_lr_patience"]),
         reduce_lr_factor=float(cfg["reduce_lr_factor"]),
         reduce_lr_min_delta=float(cfg["reduce_lr_min_delta"]),

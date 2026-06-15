@@ -10,7 +10,7 @@ import pandas as pd
 
 from src_torch.config import PROJECT_ROOT, TORCH_DATA_CONFIG, TORCH_LOSS_WEIGHTS
 from src_torch.data import load_split_df, make_dataloader, resolve_split_schema
-from src_torch.models import build_torchgeo_resnet50_forward_model
+from src_torch.models import build_torchgeo_model
 from src_torch.training import resolve_device
 
 
@@ -77,22 +77,36 @@ def load_torch_checkpoint_model(model_path: str | Path, device: Any | None = Non
     path = Path(model_path)
     run_tag, _ = infer_run_tag_and_variant(path)
     config_path = path.parent / f"model_config_{run_tag}.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"Missing model config: {config_path}")
 
     import json
 
-    model_config = json.loads(config_path.read_text())
     device = device or resolve_device("auto")
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
+    if config_path.exists():
+        model_config = json.loads(config_path.read_text())
+    else:
+        model_config = checkpoint.get("model_config")
+        if not model_config:
+            raise FileNotFoundError(
+                f"Missing model config JSON and embedded checkpoint config: {config_path}"
+            )
+        print(f"Using model config embedded in interrupted-run checkpoint: {path.name}")
+
     torch_model_config = model_config.get("torch_model_config", {})
     torch_data_config = model_config.get("torch_data_config", {})
     saved_img_size = tuple(torch_data_config.get("img_size", model_config.get("img_size", (512, 512))))
-    model = build_torchgeo_resnet50_forward_model(
+    model = build_torchgeo_model(
+        model_name=str(torch_model_config.get("torchgeo_model_name", "resnet50")),
+        weight_name=str(
+            torch_model_config.get(
+                "torchgeo_weight",
+                "ResNet50_Weights.FMOW_RGB_GASSL",
+            )
+        ),
         load_pretrained_weights=bool(torch_model_config.get("load_pretrained_weights", True)),
         preserve_input_resolution=bool(torch_model_config.get("preserve_input_resolution", False)),
         input_size=saved_img_size,
     )
-    checkpoint = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     model.eval()
