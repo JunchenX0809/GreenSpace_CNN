@@ -47,9 +47,6 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="offline_bundle_"))
     run_dir = work / "models" / "runs" / run_tag
     run_dir.mkdir(parents=True)
-    monitoring_root = work / "monitoring_output"
-    thr_dir = monitoring_root / "runs" / run_tag
-    thr_dir.mkdir(parents=True)
     images_dir = work / "images"
     images_dir.mkdir()
 
@@ -91,7 +88,7 @@ def main() -> int:
     )
 
     # Matching thresholds, keyed by the stripped label names.
-    thr_csv = thr_dir / f"thresholds_{variant}.csv"
+    thr_csv = run_dir / f"thresholds_{variant}.csv"
     with open(thr_csv, "w") as handle:
         handle.write("label,best_threshold\n")
         for name in (col[:-2] for col in binary_cols):
@@ -104,7 +101,7 @@ def main() -> int:
         Image.fromarray(arr).save(images_dir / f"img_{idx}.jpg")
 
     # Reload as a validated bundle and predict — all offline.
-    bundle = load_run_bundle(ckpt_path, device=device, monitoring_root=monitoring_root)
+    bundle = load_run_bundle(ckpt_path, device=device)
     assert bundle.bin_names == [col[:-2] for col in binary_cols], "bin_names mismatch"
     assert set(bundle.thresholds) == set(bundle.bin_names), "threshold labels mismatch"
 

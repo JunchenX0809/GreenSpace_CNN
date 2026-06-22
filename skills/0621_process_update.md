@@ -1,5 +1,22 @@
 # Process Update — 2026-06-21
 
+> **Headline:**  made a PyTorch model run portable as one folder (checkpoint + settings + thresholds) and verified it offline; after activating the project environment, run `python scripts/check_offline_checkpoint_load.py`, then review: `README.md` → `src_torch/run_bundle.py` → that check script → `notebooks/05_pyTorch_prediction_demo.ipynb`.
+
+## Full Inference — Swin V2 + NAIP
+
+Full inference completed with `PyTorch_20260614_220926/best_mcmae` and its matching validation-tuned thresholds: **15,019** unseen images, **19** prediction columns, and no notebook errors.
+
+Artifacts: [prediction CSV](../predictions/predictions_PyTorch_20260614_220926.csv), [inference summary](../predictions/summary_stats_PyTorch_20260614_220926.png), and [training-vs-inference diagnostic](../predictions/train_vs_inference_PyTorch_20260614_220926.png).
+
+| Measure | Training reference | Inference | Difference |
+| --- | ---: | ---: | ---: |
+| Score mean | `3.09` | `3.74` | `+0.65` |
+| Vegetation mean | `3.01` | `3.52` | `+0.51` |
+| Score `>= 4.9` | `17.1%` | `29.0%` | `+11.9 pp` |
+| Vegetation `>= 4.9` | `12.8%` | `23.2%` | `+10.3 pp` |
+
+The prior exact-5 clipping artifact is resolved: score had one exact `5.0` prediction and vegetation had none. Upper-end saturation remains (`>= 4.99`: score `21.7%`, vegetation `16.9%`), so this is a calibration/domain-shift signal rather than the prior inference-pipeline defect. Binary predictions were below training-label prevalence for six of seven labels; `water_feature` was broadly similar.
+
 
 ## PyTorch Portability for External Review
 
@@ -46,10 +63,11 @@ no retraining. A "bundle" = weights + settings + label names + thresholds.
 Also done: loader knobs `GREENSPACE_NUM_WORKERS` / `GREENSPACE_PIN_MEMORY`
 (`config.py`, defaults unchanged); README reoriented to PyTorch-as-canonical.
 
-**Files to reuse a model:** `models/runs/<tag>/best_mcmae_<tag>.pt`,
-`models/runs/<tag>/model_config_<tag>.json`,
-`monitoring_output/runs/<tag>/thresholds_best_mcmae.csv` — plus the repo code and
-a venv (`pip install -r requirements.txt`).
+**Files to reuse a model:** one `models/runs/<tag>/` folder containing
+`best_mcmae_<tag>.pt`, `model_config_<tag>.json`, and
+`thresholds_best_mcmae.csv` — plus the repo code and a venv
+(`pip install -r requirements.txt`). Legacy monitoring copies remain for
+historical comparisons.
 
 **Open decisions:** transform contract (`[0,1]` vs `[0,255]`) not carried by the
 bundle; `torch.load(weights_only=False)` policy undecided.
@@ -64,6 +82,7 @@ project (`GreenSpace_review_test/`) and confirmed the model works from the copy:
 | 3 model files byte-for-byte identical to source | ✅ |
 | `scripts/check_offline_checkpoint_load.py` from the copy, offline | ✅ PASS |
 | Real `PyTorch_20260614_220926` model loads from the copy (weights + config + thresholds) | ✅ |
+| Three-file bundle copied to `clusters/model_bundle/` and compared on 10 images | ✅ same predictions as the prior smoke run |
 | Fresh venv + `pip install -r requirements.txt` + offline check (arm64) | ✅ PASS — `torch 2.10.0` / `torchgeo 0.8.1` |
 
 ### Reproduce the proof (run in a fresh checkout)

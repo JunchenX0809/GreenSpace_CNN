@@ -497,21 +497,30 @@ def save_evaluation_outputs(
     overall_df: pd.DataFrame,
     per_label_df: pd.DataFrame,
 ) -> dict[str, Path]:
-    """Save PyTorch evaluation outputs using TensorFlow NB04 naming."""
+    """Save reports plus the threshold artifact required by a model run bundle."""
 
     monitoring_dir = PROJECT_ROOT / "monitoring_output" / "runs" / run_tag
     report_dir = PROJECT_ROOT / "report_outputs" / "runs" / run_tag
+    run_dir = PROJECT_ROOT / "models" / "runs" / run_tag
+    if not run_dir.is_dir():
+        raise FileNotFoundError(
+            f"Cannot save a PyTorch evaluation bundle: missing model run directory {run_dir}"
+        )
     monitoring_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
 
     paths = {
         "loss_monitor": monitoring_dir / f"loss_monitor_{variant}.csv",
+        # Keep the legacy monitoring copy for historical comparisons.
         "thresholds": monitoring_dir / f"thresholds_{variant}.csv",
+        # The canonical portable-copy lives beside checkpoint and config.
+        "bundle_thresholds": run_dir / f"thresholds_{variant}.csv",
         "overall": report_dir / f"overall_metrics_by_split_{variant}.csv",
         "per_label": report_dir / f"per_label_metrics_by_split_{variant}.csv",
     }
     loss_monitor_df.to_csv(paths["loss_monitor"], index=False)
     thresholds_df.to_csv(paths["thresholds"], index=False)
+    thresholds_df.to_csv(paths["bundle_thresholds"], index=False)
     overall_df.to_csv(paths["overall"], index=False)
     per_label_df.to_csv(paths["per_label"], index=False)
     return paths

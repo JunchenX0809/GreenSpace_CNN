@@ -171,7 +171,15 @@ read-only or temporary, set that variable to a permitted persistent location;
 the output directory and any missing parent directories are created
 automatically.
 
-### 3b) Google Drive authentication (for image download)
+### 3b) Reuse a saved PyTorch model
+
+For image-only prediction, copy one complete run folder from
+`models/runs/PyTorch_<tag>/`. The selected checkpoint, its
+`model_config_<tag>.json`, and matching `thresholds_<variant>.csv` stay in that
+same folder. This is the portable model unit; no retraining is required to use
+it on a new image folder.
+
+### 3c) Google Drive authentication (for image download)
 To download/cached images from the team Google Drive folder (used by `notebooks/02_data_preprocessing.ipynb`):
 - Put OAuth secrets at `secrets/client_secrets.json`
 - Create a project-root `.env` with `GOOGLE_DRIVE_FOLDER_ID="..."` (required)
