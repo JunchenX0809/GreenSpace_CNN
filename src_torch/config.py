@@ -37,15 +37,42 @@ def resolve_prediction_output_root(output_root: str | Path | None = None) -> Pat
     return Path(raw_root).expanduser() if raw_root else PROJECT_ROOT / "predictions"
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read a non-negative integer override from the environment."""
+
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}.") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be >= 0, got {value}.")
+    return value
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Read a boolean override from the environment."""
+
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Backward-compatible import constant. Runtime loader functions call
 # ``resolve_split_dir`` so command-line/environment configuration remains live.
 SPLIT_DIR = resolve_split_dir()
 
+# Loader throughput knobs default to safe single-process laptop values. On a
+# cluster GPU node, set GREENSPACE_NUM_WORKERS (parallel image decode) and
+# GREENSPACE_PIN_MEMORY before launch to use the available CPUs/host memory.
 TORCH_DATA_CONFIG = {
     "img_size": (512, 512),
     "batch_size": 4,
-    "num_workers": 0,
-    "pin_memory": False,
+    "num_workers": _env_int("GREENSPACE_NUM_WORKERS", 0),
+    "pin_memory": _env_bool("GREENSPACE_PIN_MEMORY", False),
     "image_transform": "tf_parity",
     "backbone_preprocess": None,
     "use_oversampling": True,

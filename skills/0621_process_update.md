@@ -1,108 +1,87 @@
 # Process Update — 2026-06-21
 
-## Inference Update
 
-_Scaffold for the accompanying inference update. Add model choice, input image
-population, output location, and result summary here._
+## PyTorch Portability for External Review
 
-## Code Review Preparation: Portable PyTorch Orchestration
+**Goal:** a new user runs an approved model without this developer's laptop
+paths, cache, or device type — no change to model behavior or training results.
 
-### Goal
+**Changes (env vars; all optional, local default unchanged):**
 
-Prepare the PyTorch pipeline for external review and eventual use at RPI and
-Mount Sinai. A new user should not need this developer's laptop paths, local
-cache, or device type to run an approved model.
+| Env var | Selects |
+| --- | --- |
+| `GREENSPACE_DATA_ROOT` | directory of split manifests |
+| `GREENSPACE_IMAGE_ROOT` | training/eval images, by filename |
+| `GREENSPACE_INFERENCE_IMAGE_ROOT` | unseen-image folder for inference |
+| `GREENSPACE_PREDICTION_OUTPUT_ROOT` | prediction output location |
 
-### Review Method
+- An explicit image folder must contain every requested file; a partial folder
+  fails clearly instead of silently mixing in the laptop cache.
+- Checkpoints rebuild **without re-downloading weights**; inference uses the
+  label order saved in the checkpoint, not a live split.
+- Device auto-selects (CUDA / Apple Silicon / CPU); no absolute checkpoint path
+  remains in evaluation. README documents the env vars.
 
-The review followed the full execution path:
+**Verified:**
 
-```text
-split manifests -> image loading -> transforms -> model -> checkpoints
--> evaluation/thresholds -> inference output
-```
+- Smoke test — 10 images from `clusters/inference/` → CPU inference → 10 valid
+  rows (19 cols, finite, score/veg within 1–5) at
+  `clusters/outputs/predictions_portability_smoke.csv`.
+- Offline checkpoint-load test passes (no network download); the real
+  `PyTorch_20260614_220926` run loads end-to-end.
+  Run: `.venv/bin/python scripts/check_offline_checkpoint_load.py`
 
-The first focus is portability without changing scientific model behavior or
-training results.
+## Run-Bundle Work
 
-### Changes Made
+**Purpose:** let other users test our trained model on new photos
+(photos → saved model → prediction CSV) offline — no absolute laptop paths, no download,
+no retraining. A "bundle" = weights + settings + label names + thresholds.
 
-- **Portable data locations:**
-  - `GREENSPACE_DATA_ROOT` selects a directory containing the split manifests.
-  - `GREENSPACE_IMAGE_ROOT` selects the folder containing training/evaluation
-    images by filename.
-  - `GREENSPACE_INFERENCE_IMAGE_ROOT` selects an unseen-image folder for
-    PyTorch inference.
-  - An explicit image folder must contain all requested files; the code stops
-    clearly instead of mixing a cluster folder with a laptop cache.
-- **Portable model loading:** saved checkpoints rebuild without deliberately
-  re-downloading pretrained weights, and inference uses the label order saved
-  with the checkpoint.
-- **Portable defaults:** PyTorch now selects the available device automatically
-  (`CUDA`, Apple Silicon, or CPU); evaluation no longer contains one absolute
-  laptop checkpoint path.
-- **Documentation:** the root README describes the three environment variables.
+| Piece | Done? |
+| --- | --- |
+| Load weights + settings + labels + thresholds as one validated unit | ✅ `load_run_bundle()` (`src_torch/run_bundle.py`) |
+| Proof it works offline, labels from checkpoint not live split | ✅ `scripts/check_offline_checkpoint_load.py` + real-run load |
+| Workflow-1 prediction on a photo folder | ✅ 10-image smoke test |
 
-### Simple Cluster Setup
+Also done: loader knobs `GREENSPACE_NUM_WORKERS` / `GREENSPACE_PIN_MEMORY`
+(`config.py`, defaults unchanged); README reoriented to PyTorch-as-canonical.
 
-```bash
-export GREENSPACE_DATA_ROOT=/approved/greenspace-data
-export GREENSPACE_IMAGE_ROOT=/approved/greenspace-images
-export GREENSPACE_INFERENCE_IMAGE_ROOT=/approved/inference-images
-```
+**Files to reuse a model:** `models/runs/<tag>/best_mcmae_<tag>.pt`,
+`models/runs/<tag>/model_config_<tag>.json`,
+`monitoring_output/runs/<tag>/thresholds_best_mcmae.csv` — plus the repo code and
+a venv (`pip install -r requirements.txt`).
 
-The image folders can be different from the original laptop folders. They only
-need to contain files with the filenames recorded in the selected manifest.
+**Open decisions:** transform contract (`[0,1]` vs `[0,255]`) not carried by the
+bundle; `torch.load(weights_only=False)` policy undecided.
 
-### Verification Completed
+## Handoff Verification
 
-- Existing local split manifests still find all expected training images.
-- A simulated alternate image folder successfully resolved images despite a
-  different legacy laptop path.
-- Python source compiles and the edited PyTorch notebooks remain valid.
+Copied the repo code + the 3 model files to a separate location outside the
+project (`GreenSpace_review_test/`) and confirmed the model works from the copy:
 
-### Remaining Verification
+| Check | Result |
+| --- | --- |
+| 3 model files byte-for-byte identical to source | ✅ |
+| `scripts/check_offline_checkpoint_load.py` from the copy, offline | ✅ PASS |
+| Real `PyTorch_20260614_220926` model loads from the copy (weights + config + thresholds) | ✅ |
+| Fresh venv + `pip install -r requirements.txt` + offline check (arm64) | ✅ PASS — `torch 2.10.0` / `torchgeo 0.8.1` |
 
-Run one real PyTorch/TorchGeo offline checkpoint-load test in an environment
-with those packages installed. It must load a saved run and produce the same
-small-sample predictions without attempting a network download.
+### Reproduce the proof (run in a fresh checkout)
 
-## Portability Smoke Test
-
-### Rationale
-
-The prior pipeline expected one developer's image paths. This test checks that
-inference can read images from a separate folder and write results outside the
-normal project output location.
-
-### Change Tested
-
-The PyTorch input/output location settings were used:
+A reviewer can confirm the model is self-contained — clean environment,
+dependencies, and offline model load — by running this from the repo root:
 
 ```bash
-export GREENSPACE_INFERENCE_IMAGE_ROOT="$PWD/clusters/inference"
-export GREENSPACE_PREDICTION_OUTPUT_ROOT="$PWD/clusters/outputs"
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt          # pulls torch / torchgeo (multi-GB)
+python scripts/check_offline_checkpoint_load.py   # expect: PASS
 ```
 
-The reusable checkpoint loader and image-only inference helpers were then run
-with the project virtual environment (`.venv/bin/python`) and the saved
-`PyTorch_20260614_220926` best-MC-MAE checkpoint.
-
-### Result
-
-- The simulated cluster folder supplied 10 RGB `512 x 512` JPEG inputs.
-- Inference ran successfully on CPU and produced 10 rows with the expected 19
-  prediction columns.
-- All numeric outputs were finite; score and vegetation predictions remained
-  within the expected 1–5 range.
-- The output was created at:
-
-```text
-clusters/outputs/predictions_portability_smoke.csv
-```
-
-This demonstrates that inference input and output locations no longer depend
-on the original laptop cache/output paths. The selected model checkpoint and
-threshold file still reside in the repository for this first simulation;
-packaging them together as a movable model run bundle remains the next step.
-
+**Apple Silicon:** `python3.11` must be an **arm64** build. An x86_64 Python
+(e.g. an Intel pyenv/Homebrew one) fails at install — `torch==2.10.0` has no
+x86_64 macOS wheel (they stop at 2.2.2). Verify with
+`python3.11 -c "import platform; print(platform.machine())"` (want `arm64`); see
+the README arm64 troubleshooting if it prints `x86_64`. Linux/CUDA clusters are
+unaffected.

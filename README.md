@@ -37,16 +37,28 @@ This repository contains the machine learning pipeline to:
 3. Predict green space characteristics at scale
 4. Validate model performance against human annotations
 
-## DL Choice: Tensorflow - Keras Integration
-**Why Tensorflow**
-1. Keras API
-High-level Tensorflow API. It takes care of the training loop, metrics, logging, and saving models.
-    - Concise and User-friendly
-2. Multi-task models
-Keras makes it straightforward to build one CNN with multiple outputs. It suits our usecase because:
-    - we have multilabel binary, ordinal, and 1-5 features. Keras can have a binary head for features, a categorical head for shade, and a 5-class head for structure. 
+## DL Choice: PyTorch + TorchGeo (current) — TensorFlow/Keras (legacy)
 
-**Our Label:**
+The model is now a **multi-task PyTorch model built on TorchGeo**. The current
+backbone is **Swin V2 Base with NAIP RGB Satlas pretrained weights**, which
+evaluated slightly better than the earlier TensorFlow/Keras EfficientNet model
+on our priority labels (see `skills/0615_process_update.md`). The PyTorch
+pipeline is the canonical path: it lives in `src_torch/` and is exercised by the
+`*_pyTorch_*` / `*_torch_*` notebooks below.
+
+The original **TensorFlow/Keras implementation** (`src/` and the unprefixed
+`03_model_training.ipynb` / `04_model_evaluation.ipynb`) is **retained as
+legacy reference only**. It is not the path under active development. New work,
+cluster runs, and the code under review all use the PyTorch pipeline.
+
+**Active entry points (PyTorch):**
+- Train: `notebooks/03_torch_model_training.ipynb` (model builders in `src_torch/models.py`)
+- Evaluate + calibrate thresholds: `notebooks/04_pyTorch_model_evaluation_v1.ipynb`
+- Predict on new images: `notebooks/05_pyTorch_prediction_demo.ipynb`
+
+**Why a multi-task model:** one backbone feeds four heads matching our label
+schema — a multi-label binary head, a 2-class shade head, and two 1–5 ordinal
+heads (structure, vegetation):
 - Multi-label binary: `sports_field`, `multipurpose_open_area`, `children_s_playground`, `water_feature`, `gardens`, `walking_paths`, `built_structures`, `parking_lots`
 - Shade (2-class): `shade_class ∈ {0=minimal, 1=abundant}`
 - Structured (1–5): `score_class ∈ {1..5}`
@@ -139,6 +151,11 @@ export GREENSPACE_INFERENCE_IMAGE_ROOT=/approved/greenspace-inference-images
 
 # Optional destination for PyTorch inference CSVs and diagnostic plots.
 export GREENSPACE_PREDICTION_OUTPUT_ROOT=/approved/greenspace-predictions
+
+# Optional loader throughput knobs for a GPU node (defaults: 0 workers, no pin).
+# num_workers parallelizes image decode; pin_memory speeds host->GPU copies.
+export GREENSPACE_NUM_WORKERS=8
+export GREENSPACE_PIN_MEMORY=true
 ```
 
 If the variables are not set, local development continues to use this
@@ -177,9 +194,14 @@ Open `notebooks/02_data_preprocessing.ipynb` and run cells:
 - Step 4: build oversampled + augmented preview stream (in-memory)
 - Step 5: dynamic 60/20/20 split → writes `data/processed/splits/{train,val,test}.csv`
 
-### 6) Train + evaluate
-- Train: `notebooks/03_model_training.ipynb`
-- Evaluate: `notebooks/04_model_evaluation.ipynb` (uses `data/processed/splits/test.csv`)
+### 6) Train + evaluate (PyTorch — current)
+- Train: `notebooks/03_torch_model_training.ipynb`
+- Evaluate: `notebooks/04_pyTorch_model_evaluation_v1.ipynb` (uses `data/processed/splits/test.csv`)
+- Predict on new images: `notebooks/05_pyTorch_prediction_demo.ipynb`
+
+> Legacy TensorFlow/Keras equivalents (`03_model_training.ipynb`,
+> `04_model_evaluation.ipynb`) remain in the repo for reference but are no longer
+> the active path.
 
 Notes:
 - Raw data and images are ignored by Git; manifests under `data/processed/` can be committed for reproducibility.
