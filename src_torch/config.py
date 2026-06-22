@@ -4,13 +4,42 @@ The first PyTorch step reuses the current NB02 split outputs and the same
 label/augmentation controls as the TensorFlow notebooks.
 """
 
+import os
 from pathlib import Path
 
 from src.augmentation import AUG_PARAMS
 from src.label_schema import EXPERIMENT_CONFIG, HEAD_PRESETS, resolve_label_cols
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SPLIT_DIR = PROJECT_ROOT / "data" / "processed" / "splits"
+
+
+def resolve_data_root(data_root: str | Path | None = None) -> Path:
+    """Resolve the approved data root without embedding a host-specific path.
+
+    The explicit argument wins, followed by ``GREENSPACE_DATA_ROOT``.  When
+    neither is set, local development keeps using ``<project>/data``.
+    """
+
+    raw_root = data_root if data_root is not None else os.getenv("GREENSPACE_DATA_ROOT")
+    return Path(raw_root).expanduser() if raw_root else PROJECT_ROOT / "data"
+
+
+def resolve_split_dir(split_dir: str | Path | None = None) -> Path:
+    """Resolve the directory that contains train/val/test split manifests."""
+
+    return Path(split_dir).expanduser() if split_dir is not None else resolve_data_root() / "processed" / "splits"
+
+
+def resolve_prediction_output_root(output_root: str | Path | None = None) -> Path:
+    """Resolve where image-only prediction CSVs and plots are written."""
+
+    raw_root = output_root if output_root is not None else os.getenv("GREENSPACE_PREDICTION_OUTPUT_ROOT")
+    return Path(raw_root).expanduser() if raw_root else PROJECT_ROOT / "predictions"
+
+
+# Backward-compatible import constant. Runtime loader functions call
+# ``resolve_split_dir`` so command-line/environment configuration remains live.
+SPLIT_DIR = resolve_split_dir()
 
 TORCH_DATA_CONFIG = {
     "img_size": (512, 512),
@@ -75,7 +104,7 @@ TORCH_TRAINING_CONFIG = {
     "reduce_lr_min_delta": 1e-4,
     "mae_guardrail_delta": 0.05,
     "mae_guardrail_patience": 10,
-    "device": "mps",
+    "device": "auto",
     "max_train_batches": None,
     "max_val_batches": None,
 }
@@ -91,5 +120,8 @@ __all__ = [
     "TORCH_MODEL_CONFIG",
     "TORCH_TRAINING_CONFIG",
     "TORCH_TRAINING_SMOKE_CONFIG",
+    "resolve_data_root",
     "resolve_label_cols",
+    "resolve_prediction_output_root",
+    "resolve_split_dir",
 ]

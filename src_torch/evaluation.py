@@ -70,6 +70,19 @@ def find_latest_pytorch_checkpoint(
     raise FileNotFoundError(f"No PyTorch checkpoints found under {root}")
 
 
+def checkpoint_binary_cols(model_config: dict[str, Any]) -> list[str]:
+    """Return the ordered binary-head schema saved with a model run."""
+
+    binary_cols = model_config.get("binary_cols")
+    if not isinstance(binary_cols, list) or not binary_cols or not all(
+        isinstance(label, str) and label.endswith("_p") for label in binary_cols
+    ):
+        raise ValueError("Checkpoint model config must contain a nonempty ordered binary_cols list.")
+    if len(binary_cols) != len(set(binary_cols)):
+        raise ValueError("Checkpoint model config contains duplicate binary_cols labels.")
+    return binary_cols
+
+
 def load_torch_checkpoint_model(model_path: str | Path, device: Any | None = None) -> tuple[Any, dict[str, Any], dict[str, Any]]:
     """Load a GreenSpace TorchGeo model checkpoint for evaluation."""
 
@@ -94,6 +107,13 @@ def load_torch_checkpoint_model(model_path: str | Path, device: Any | None = Non
 
     torch_model_config = model_config.get("torch_model_config", {})
     torch_data_config = model_config.get("torch_data_config", {})
+    binary_cols = checkpoint_binary_cols(model_config)
+    saved_num_binary = int(torch_model_config.get("num_binary", len(binary_cols)))
+    if saved_num_binary != len(binary_cols):
+        raise ValueError(
+            "Checkpoint model config is inconsistent: "
+            f"num_binary={saved_num_binary}, binary_cols={len(binary_cols)}."
+        )
     saved_img_size = tuple(torch_data_config.get("img_size", model_config.get("img_size", (512, 512))))
     model = build_torchgeo_model(
         model_name=str(torch_model_config.get("torchgeo_model_name", "resnet50")),
@@ -103,9 +123,16 @@ def load_torch_checkpoint_model(model_path: str | Path, device: Any | None = Non
                 "ResNet50_Weights.FMOW_RGB_GASSL",
             )
         ),
-        load_pretrained_weights=bool(torch_model_config.get("load_pretrained_weights", True)),
+        # The checkpoint already contains the backbone parameters. Resolving the
+        # weight enum still supplies its preprocessing contract, but loading
+        # pretrained parameters here would require an unnecessary network fetch.
+        load_pretrained_weights=False,
         preserve_input_resolution=bool(torch_model_config.get("preserve_input_resolution", False)),
         input_size=saved_img_size,
+        num_binary=saved_num_binary,
+        num_shade=int(torch_model_config.get("num_shade", 2)),
+        score_output_range=tuple(torch_model_config.get("score_output_range", (1.0, 5.0))),
+        veg_output_range=tuple(torch_model_config.get("veg_output_range", (1.0, 5.0))),
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)

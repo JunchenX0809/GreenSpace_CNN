@@ -178,6 +178,10 @@ def build_torchgeo_model(
     load_pretrained_weights: bool = TORCH_MODEL_CONFIG["load_pretrained_weights"],
     preserve_input_resolution: bool = TORCH_MODEL_CONFIG["preserve_input_resolution"],
     input_size: tuple[int, int] = TORCH_DATA_CONFIG["img_size"],
+    num_binary: int = TORCH_MODEL_CONFIG["num_binary"],
+    num_shade: int = TORCH_MODEL_CONFIG["num_shade"],
+    score_output_range: tuple[float, float] = TORCH_MODEL_CONFIG["score_output_range"],
+    veg_output_range: tuple[float, float] = TORCH_MODEL_CONFIG["veg_output_range"],
 ) -> GreenSpaceTorchGeoModel:
     """Build the centrally configured TorchGeo multi-task model."""
 
@@ -187,6 +191,10 @@ def build_torchgeo_model(
         load_pretrained_weights=load_pretrained_weights,
         preserve_input_resolution=preserve_input_resolution,
         input_size=input_size,
+        num_binary=num_binary,
+        num_shade=num_shade,
+        score_output_range=score_output_range,
+        veg_output_range=veg_output_range,
     )
 
 

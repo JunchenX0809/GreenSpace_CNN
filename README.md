@@ -121,6 +121,39 @@ python scripts/diagnose_tf_env.py
 - Raw survey CSV: `data/raw/0103_survey_response.csv` (or your latest dated file)
 - Images are downloaded/cached locally under `data/cache/images/` by the preprocessing notebook
 
+### 3a) Use an approved data location on another machine or cluster
+
+Do not edit split CSVs to replace another user's absolute paths. Set these
+environment variables before running PyTorch training or evaluation instead:
+
+```bash
+# Directory containing processed/splits/{train,val,test}.csv and cache/images/
+export GREENSPACE_DATA_ROOT=/approved/greenspace-data
+
+# Optional explicit directory containing the training/validation image files.
+# When set, every split-manifest image must be present here by image filename.
+export GREENSPACE_IMAGE_ROOT=/approved/greenspace-images
+
+# Optional directory of unseen images for the PyTorch prediction notebook.
+export GREENSPACE_INFERENCE_IMAGE_ROOT=/approved/greenspace-inference-images
+
+# Optional destination for PyTorch inference CSVs and diagnostic plots.
+export GREENSPACE_PREDICTION_OUTPUT_ROOT=/approved/greenspace-predictions
+```
+
+If the variables are not set, local development continues to use this
+repository's `data/` directory. The cluster image folder does not need to match
+anyone's laptop path; it only needs to contain the filenames named by the split
+manifest.
+
+**Input versus output:** users must point the code to approved input data and
+images; the code never creates or guesses input files. Prediction outputs are
+different: if `GREENSPACE_PREDICTION_OUTPUT_ROOT` is omitted, PyTorch inference
+creates and uses `predictions/` in the repository. If a cluster checkout is
+read-only or temporary, set that variable to a permitted persistent location;
+the output directory and any missing parent directories are created
+automatically.
+
 ### 3b) Google Drive authentication (for image download)
 To download/cached images from the team Google Drive folder (used by `notebooks/02_data_preprocessing.ipynb`):
 - Put OAuth secrets at `secrets/client_secrets.json`

@@ -52,6 +52,7 @@ Pipfile.lock
 
 # inference folder
 predictions/
+clusters/
 
 # Claude agent memory (local only, not for version control)
 /memory/
