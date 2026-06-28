@@ -54,6 +54,10 @@ Pipfile.lock
 predictions/
 clusters/
 
+# Presentation visuals: track images, ignore generated data tables
+/presentation_visuals_only/eval_ordinal/*.csv
+/presentation_visuals_only/eval_binary/*.csv
+
 # Claude agent memory (local only, not for version control)
 /memory/
 
@@ -62,4 +66,3 @@ clusters/
 /skills/Labels_Processing_Method_v*.md
 /.cursor
 .claude/
-
