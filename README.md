@@ -3,6 +3,114 @@
 ## Overview
 Train a CNN to reproduce greenspace ratings at scale using human judgments from photos/satellite images.
 
+## Reviewer Quickstart (PyTorch)
+
+This is the current review path. The active model code is the PyTorch/TorchGeo
+pipeline on the `PyTorch_test` branch. If this README is already on `main` after
+the PyTorch merge, you do not need to switch branches.
+
+The Git repository contains code and notebooks. Large artifacts are shared
+separately: the trained model bundle, raw data, cached images, and prediction
+outputs are intentionally not committed.
+
+### 1) Clone and install
+
+```bash
+git clone https://github.com/JunchenX0809/GreenSpace_CNN.git
+cd GreenSpace_CNN
+git checkout PyTorch_test  # skip this if main already contains the PyTorch README/code
+
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install -r requirements.txt
+
+# Optional, avoids Matplotlib cache warnings on some locked-down machines.
+export MPLCONFIGDIR="$PWD/.matplotlib"
+```
+
+On Apple Silicon Macs, use an arm64 Python 3.11 build. Check with:
+
+```bash
+python -c "import platform; print(platform.machine())"
+```
+
+### 2) Download the model bundle
+
+Download the `PyTorch_20260614_220926` best-MC-MAE bundle from the shared Drive
+folder:
+
+[Model bundle Google Drive folder](https://drive.google.com/drive/folders/1tlsfN30WkAFBkwEmtTJmGt-uA6KbKXZA?usp=sharing)
+
+Unzip/place it so the project contains this folder:
+
+```text
+models/runs/PyTorch_20260614_220926/
+├── best_mcmae_PyTorch_20260614_220926.pt
+├── model_config_PyTorch_20260614_220926.json
+└── thresholds_best_mcmae.csv
+```
+
+Those three files are the portable model unit: checkpoint, architecture/config,
+and prediction thresholds. They are enough to reuse the trained model without
+retraining.
+
+### 3) Run the quick checks
+
+```bash
+python scripts/check_python_version.py
+python scripts/check_offline_checkpoint_load.py
+```
+
+`check_offline_checkpoint_load.py` uses a tiny synthetic checkpoint to verify
+that the environment and bundle-loading path work offline. It does not require
+the large real checkpoint.
+
+### 4) Run sample image inference
+
+Put a small folder of `.jpg`, `.jpeg`, or `.png` images at
+`data/cache/inference_images/`, or point to any image folder:
+
+```bash
+export GREENSPACE_INFERENCE_IMAGE_ROOT=/path/to/sample-images
+```
+
+Then run this small inference smoke test:
+
+```bash
+python - <<'PY'
+import os
+from pathlib import Path
+
+from src_torch.config import TORCH_DATA_CONFIG, resolve_prediction_output_root
+from src_torch.inference import (
+    build_prediction_dataframe,
+    list_inference_image_paths,
+    predict_image_paths,
+)
+from src_torch.run_bundle import load_run_bundle
+from src_torch.training import resolve_device
+
+model_path = Path("models/runs/PyTorch_20260614_220926/best_mcmae_PyTorch_20260614_220926.pt")
+image_dir = Path(os.getenv("GREENSPACE_INFERENCE_IMAGE_ROOT", "data/cache/inference_images"))
+device = resolve_device("auto")
+
+bundle = load_run_bundle(model_path, device=device)
+image_paths = list_inference_image_paths(image_dir, limit=10)
+preds = predict_image_paths(bundle.model, image_paths, device=device, batch_size=int(TORCH_DATA_CONFIG["batch_size"]))
+pred_df = build_prediction_dataframe(image_paths, preds, bundle.bin_names, bundle.thresholds)
+
+out_dir = resolve_prediction_output_root()
+out_dir.mkdir(parents=True, exist_ok=True)
+out_path = out_dir / "predictions_reviewer_smoke.csv"
+pred_df.to_csv(out_path, index=False)
+print(f"Saved {len(pred_df)} rows to {out_path}")
+print(pred_df.head())
+PY
+```
+
+For a notebook workflow, use `notebooks/05_pyTorch_prediction_demo.ipynb`.
+
 ## Survey Design
 Human raters evaluate images across standardized criteria:
 
@@ -37,16 +145,28 @@ This repository contains the machine learning pipeline to:
 3. Predict green space characteristics at scale
 4. Validate model performance against human annotations
 
-## DL Choice: Tensorflow - Keras Integration
-**Why Tensorflow**
-1. Keras API
-High-level Tensorflow API. It takes care of the training loop, metrics, logging, and saving models.
-    - Concise and User-friendly
-2. Multi-task models
-Keras makes it straightforward to build one CNN with multiple outputs. It suits our usecase because:
-    - we have multilabel binary, ordinal, and 1-5 features. Keras can have a binary head for features, a categorical head for shade, and a 5-class head for structure. 
+## DL Choice: PyTorch + TorchGeo (current) — TensorFlow/Keras (legacy)
 
-**Our Label:**
+The model is now a **multi-task PyTorch model built on TorchGeo**. The current
+backbone is **Swin V2 Base with NAIP RGB Satlas pretrained weights**, which
+evaluated slightly better than the earlier TensorFlow/Keras EfficientNet model
+on our priority labels (see `skills/0615_process_update.md`). The PyTorch
+pipeline is the canonical path: it lives in `src_torch/` and is exercised by the
+`*_pyTorch_*` / `*_torch_*` notebooks below.
+
+The original **TensorFlow/Keras implementation** (`src/` and the unprefixed
+`03_model_training.ipynb` / `04_model_evaluation.ipynb`) is **retained as
+legacy reference only**. It is not the path under active development. New work,
+cluster runs, and the code under review all use the PyTorch pipeline.
+
+**Active entry points (PyTorch):**
+- Train: `notebooks/03_torch_model_training.ipynb` (model builders in `src_torch/models.py`)
+- Evaluate + calibrate thresholds: `notebooks/04_pyTorch_model_evaluation_v1.ipynb`
+- Predict on new images: `notebooks/05_pyTorch_prediction_demo.ipynb`
+
+**Why a multi-task model:** one backbone feeds four heads matching our label
+schema — a multi-label binary head, a 2-class shade head, and two 1–5 ordinal
+heads (structure, vegetation):
 - Multi-label binary: `sports_field`, `multipurpose_open_area`, `children_s_playground`, `water_feature`, `gardens`, `walking_paths`, `built_structures`, `parking_lots`
 - Shade (2-class): `shade_class ∈ {0=minimal, 1=abundant}`
 - Structured (1–5): `score_class ∈ {1..5}`
@@ -64,7 +184,7 @@ Keras makes it straightforward to build one CNN with multiple outputs. It suits 
 4. Evaluate and calibrate
     - We check performance on holdout images and set thresholds for the binary labels to meet our priorities.
 
-## Setup and Quick Start
+## Full Setup and Training Workflow
 
 ### 0) Prerequisites (recommended)
 - Python **3.11+**
@@ -96,8 +216,12 @@ python -m ipykernel install --user --name GreenSpace_CNN --display-name "GreenSp
 pip install -r requirements.txt
 ```
 
-### 2b) Install TensorFlow (platform-specific)
-- macOS (Apple Silicon / Intel), Linux, Windows:
+### 2b) Optional: install TensorFlow for legacy notebooks only
+
+The current review path does not require TensorFlow. Install it only if you plan
+to run the legacy `src/`, `03_model_training.ipynb`, or
+`04_model_evaluation.ipynb` workflow.
+
 ```bash
 pip install "tensorflow>=2.16"
 ```
@@ -113,6 +237,11 @@ export KERAS_HOME="$PWD/.keras"
 ### 2c) Quick sanity checks (recommended)
 ```bash
 python scripts/check_python_version.py
+```
+
+For legacy TensorFlow work, also run:
+
+```bash
 python scripts/diagnose_tf_env.py
 ```
 
@@ -121,7 +250,56 @@ python scripts/diagnose_tf_env.py
 - Raw survey CSV: `data/raw/0103_survey_response.csv` (or your latest dated file)
 - Images are downloaded/cached locally under `data/cache/images/` by the preprocessing notebook
 
-### 3b) Google Drive authentication (for image download)
+### 3a) Use an approved data location on another machine or cluster
+
+Do not edit split CSVs to replace another user's absolute paths. Set these
+environment variables before running PyTorch training or evaluation instead:
+
+```bash
+# Directory containing processed/splits/{train,val,test}.csv and cache/images/
+export GREENSPACE_DATA_ROOT=/approved/greenspace-data
+
+# Optional explicit directory containing the training/validation image files.
+# When set, every split-manifest image must be present here by image filename.
+export GREENSPACE_IMAGE_ROOT=/approved/greenspace-images
+
+# Optional directory of unseen images for the PyTorch prediction notebook.
+export GREENSPACE_INFERENCE_IMAGE_ROOT=/approved/greenspace-inference-images
+
+# Optional destination for PyTorch inference CSVs and diagnostic plots.
+export GREENSPACE_PREDICTION_OUTPUT_ROOT=/approved/greenspace-predictions
+
+# Optional loader throughput knobs for a GPU node (defaults: 0 workers, no pin).
+# num_workers parallelizes image decode; pin_memory speeds host->GPU copies.
+export GREENSPACE_NUM_WORKERS=8
+export GREENSPACE_PIN_MEMORY=true
+```
+
+If the variables are not set, local development continues to use this
+repository's `data/` directory. The cluster image folder does not need to match
+anyone's laptop path; it only needs to contain the filenames named by the split
+manifest.
+
+**Input versus output:** users must point the code to approved input data and
+images; the code never creates or guesses input files. Prediction outputs are
+different: if `GREENSPACE_PREDICTION_OUTPUT_ROOT` is omitted, PyTorch inference
+creates and uses `predictions/` in the repository. If a cluster checkout is
+read-only or temporary, set that variable to a permitted persistent location;
+the output directory and any missing parent directories are created
+automatically.
+
+### 3b) Reuse a saved PyTorch model
+
+For image-only prediction, download the shared model bundle and place the run
+folder under `models/runs/`. The selected checkpoint, its
+`model_config_<tag>.json`, and matching `thresholds_<variant>.csv` must stay in
+that same folder. This is the portable model unit; no retraining is required to
+use it on a new image folder.
+
+Current review bundle:
+[PyTorch_20260614_220926 best-MC-MAE bundle](https://drive.google.com/drive/folders/1tlsfN30WkAFBkwEmtTJmGt-uA6KbKXZA?usp=sharing)
+
+### 3c) Google Drive authentication (for image download)
 To download/cached images from the team Google Drive folder (used by `notebooks/02_data_preprocessing.ipynb`):
 - Put OAuth secrets at `secrets/client_secrets.json`
 - Create a project-root `.env` with `GOOGLE_DRIVE_FOLDER_ID="..."` (required)
@@ -144,9 +322,14 @@ Open `notebooks/02_data_preprocessing.ipynb` and run cells:
 - Step 4: build oversampled + augmented preview stream (in-memory)
 - Step 5: dynamic 60/20/20 split → writes `data/processed/splits/{train,val,test}.csv`
 
-### 6) Train + evaluate
-- Train: `notebooks/03_model_training.ipynb`
-- Evaluate: `notebooks/04_model_evaluation.ipynb` (uses `data/processed/splits/test.csv`)
+### 6) Train + evaluate (PyTorch — current)
+- Train: `notebooks/03_torch_model_training.ipynb`
+- Evaluate: `notebooks/04_pyTorch_model_evaluation_v1.ipynb` (uses `data/processed/splits/test.csv`)
+- Predict on new images: `notebooks/05_pyTorch_prediction_demo.ipynb`
+
+> Legacy TensorFlow/Keras equivalents (`03_model_training.ipynb`,
+> `04_model_evaluation.ipynb`) remain in the repo for reference but are no longer
+> the active path.
 
 Notes:
 - Raw data and images are ignored by Git; manifests under `data/processed/` can be committed for reproducibility.

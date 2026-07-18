@@ -5,6 +5,17 @@
 # - See README "Install TensorFlow" section for the correct command.
 # - Avoid pinning standalone `keras` separately; it can cause TF/Keras version skew.
 
+# PyTorch experiment stack (used by src_torch and notebooks/03_torch_*)
+# Pin torch + torchvision together (official matrix: 2.10.0 + 0.25.0).
+# Use arm64 Python on Apple Silicon (/opt/homebrew/bin/python3.11); x86_64 venvs
+# may not get these torch builds from PyPI.
+# torchgeo pulls lightning, kornia, segmentation-models-pytorch, etc. — no need to pin those separately.
+torch==2.10.0
+torchvision==0.25.0
+torchgeo==0.8.1
+timm==1.0.27
+torchmetrics==1.9.0
+
 # Computer vision and image processing
 opencv-python<4.12
 pillow>=10.0.0
