@@ -300,19 +300,44 @@ Current review bundle:
 [PyTorch_20260614_220926 best-MC-MAE bundle](https://drive.google.com/drive/folders/1tlsfN30WkAFBkwEmtTJmGt-uA6KbKXZA?usp=sharing)
 
 ### 3c) Google Drive authentication (for image download)
-To download/cached images from the team Google Drive folder (used by `notebooks/02_data_preprocessing.ipynb`):
+To download/cache the rated images from the team Google Drive folder:
 - Put OAuth secrets at `secrets/client_secrets.json`
 - Create a project-root `.env` with `GOOGLE_DRIVE_FOLDER_ID="..."` (required)
 
+```bash
+python scripts/download_drive_images.py \
+  --survey-csv data/raw/0614_survey_response.csv \
+  --filelist-csv data/filelist_0103.csv \
+  --cache-dir data/cache/images
+```
+
+Replace the CSV paths for each run. Start with `--manifest-only` to inspect the
+joins without downloading, or `--limit 50` for a small cache test.
+
 Full walkthrough + troubleshooting: see [Google Drive authentication guide](instruction_docs/google_drive_auth.md).
 
-### 4) Clean the survey CSV (reproducible script)
+### 4) Preprocess the survey and build train/validation/test splits
+
+Run the established cleaning, inclusion filtering, rater aggregation, and
+deterministic 60/20/20 split through one command:
+
 ```bash
-python scripts/clean_survey.py \
-  --in-csv data/raw/0103_survey_response.csv \
-  --out-csv data/raw/0103_survey_response_clean.csv \
-  --image-col "Image Name"
+python scripts/preprocess.py \
+  --survey-csv data/raw/0614_survey_response.csv \
+  --filelist-csv data/interim/filelist_0418_215415_with_drive_fileid.csv
 ```
+
+Replace both paths for the current run. `--filelist-csv` is optional, but when
+provided it preserves `drive_file_id` in the split manifests. Cached rated
+images default to `data/cache/images`; outputs are written to `data/interim/`
+and `data/processed/`. The established split seeds remain 123 and 456.
+
+For a deterministic 50-image smoke dataset, add `--sample-size 50`. Add
+`--fail-on-missing-images` for a full production run that must not silently
+filter uncached labeled images.
+
+The lower-level `scripts/clean_survey.py` remains available when only header and
+filename normalization is needed.
 
 ### 5) Run preprocessing notebook
 Open `notebooks/02_data_preprocessing.ipynb` and run cells:
@@ -323,7 +348,39 @@ Open `notebooks/02_data_preprocessing.ipynb` and run cells:
 - Step 5: dynamic 60/20/20 split → writes `data/processed/splits/{train,val,test}.csv`
 
 ### 6) Train + evaluate (PyTorch — current)
-- Train: `notebooks/03_torch_model_training.ipynb`
+
+Run the deterministic 1+1 smoke schedule:
+
+```bash
+python scripts/train_torch.py --mode smoke --data-root data/core_pipeline_demo
+```
+
+Run the current full 5-warm-up plus 15-fine-tuning schedule:
+
+```bash
+python scripts/train_torch.py --mode full --data-root data
+```
+
+Each completed epoch atomically updates
+`models/runs/<run-tag>/last_<run-tag>.pt`. Resume an interrupted run with the
+same mode and data:
+
+```bash
+python scripts/train_torch.py \
+  --mode full \
+  --data-root data \
+  --resume models/runs/<run-tag>/last_<run-tag>.pt
+```
+
+Resume validates that train/validation rows, ordering, filenames, labels, model
+settings, batch size, and epoch targets match the saved run. Device, worker
+count, and pinned-memory settings may change. Checkpoints are written after
+completed epochs, so an interruption inside an epoch repeats that epoch.
+Because resumable checkpoints include optimizer and training-control state,
+they can be substantially larger than inference-only checkpoints; check free
+disk space before a long run.
+
+- Historical/interactive train entry: `notebooks/03_torch_model_training.ipynb`
 - Evaluate: `notebooks/04_pyTorch_model_evaluation_v1.ipynb` (uses `data/processed/splits/test.csv`)
 - Predict on new images: `notebooks/05_pyTorch_prediction_demo.ipynb`
 

@@ -66,8 +66,50 @@ GOOGLE_OAUTH_CLIENT_SECRETS="secrets/client_secrets.json"
 GOOGLE_OAUTH_CREDENTIALS_CACHE="secrets/credentials.json"
 ```
 
-## 3) First-time auth flow (browser-based)
-When you run the Drive steps in `notebooks/02_data_preprocessing.ipynb`, the code calls:
+## 3) Download the rated survey images from a terminal
+
+From the repository root, with the project virtual environment activated, run:
+
+```bash
+python scripts/download_drive_images.py \
+  --survey-csv data/raw/0614_survey_response.csv \
+  --filelist-csv data/filelist_0103.csv \
+  --cache-dir data/cache/images
+```
+
+Replace the two CSV paths with the files for the current run. The folder ID is
+read from `GOOGLE_DRIVE_FOLDER_ID` in `.env`; it can instead be supplied with
+`--folder-id`. The script lists images that are direct children of that folder,
+matching the established `02_data_preprocessing.ipynb` layout.
+
+Useful safe-start options:
+
+```bash
+# Build and inspect the manifests without downloading image bytes
+python scripts/download_drive_images.py \
+  --survey-csv data/raw/0614_survey_response.csv \
+  --filelist-csv data/filelist_0103.csv \
+  --manifest-only
+
+# Download only 50 unique rated images
+python scripts/download_drive_images.py \
+  --survey-csv data/raw/0614_survey_response.csv \
+  --filelist-csv data/filelist_0103.csv \
+  --limit 50
+```
+
+The command writes run-tagged Drive, filelist, and included-survey manifests plus
+a JSON summary under `data/interim/`. Existing nonempty cached images are skipped.
+Failed downloads are retried and leave no completed-looking partial file. The
+command exits nonzero if a requested download still fails.
+
+Use `--fail-on-missing` when every included survey image must match a Drive ID.
+Use `python scripts/download_drive_images.py --help` for path overrides and the
+full option list.
+
+## 4) First-time auth flow (browser-based)
+
+The download script calls:
 - `get_drive(use_local_server=True)`
 
 On first run, this triggers `LocalWebserverAuth()`:
@@ -78,8 +120,13 @@ On first run, this triggers `LocalWebserverAuth()`:
 After this, reruns usually **do not** prompt again (tokens refresh automatically).
 
 ## If browser auth doesn’t work
-If the local webserver flow is blocked (remote machine / SSH / corporate policy), switch to:
-- `get_drive(use_local_server=False)` (uses `CommandLineAuth()`)
+If the local webserver flow is blocked (remote machine / SSH / corporate policy), run:
 
-You can do that in the notebook cell that creates `drive = get_drive(...)`.
+```bash
+python scripts/download_drive_images.py \
+  --survey-csv path/to/survey.csv \
+  --filelist-csv path/to/filelist.csv \
+  --command-line-auth
+```
 
+This uses PyDrive2 `CommandLineAuth()` instead of opening the local browser callback.

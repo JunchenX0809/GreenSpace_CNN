@@ -259,6 +259,8 @@ def make_dataloader(
     image_transform: str = TORCH_DATA_CONFIG["image_transform"],
     augment: bool = False,
     image_root: str | Path | None = None,
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
 ):
     """Construct a DataLoader for one split."""
 
@@ -276,8 +278,16 @@ def make_dataloader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=TORCH_DATA_CONFIG["num_workers"],
-        pin_memory=TORCH_DATA_CONFIG["pin_memory"],
+        num_workers=(
+            TORCH_DATA_CONFIG["num_workers"]
+            if num_workers is None
+            else int(num_workers)
+        ),
+        pin_memory=(
+            TORCH_DATA_CONFIG["pin_memory"]
+            if pin_memory is None
+            else bool(pin_memory)
+        ),
     )
 
 
@@ -310,6 +320,8 @@ def make_train_dataloader(
     seed: int | None = None,
     return_plan: bool = False,
     image_root: str | Path | None = None,
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
 ):
     """Construct the train DataLoader with optional NB03-style parity behavior."""
 
@@ -337,8 +349,16 @@ def make_train_dataloader(
         batch_size=batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        num_workers=TORCH_DATA_CONFIG["num_workers"],
-        pin_memory=TORCH_DATA_CONFIG["pin_memory"],
+        num_workers=(
+            TORCH_DATA_CONFIG["num_workers"]
+            if num_workers is None
+            else int(num_workers)
+        ),
+        pin_memory=(
+            TORCH_DATA_CONFIG["pin_memory"]
+            if pin_memory is None
+            else bool(pin_memory)
+        ),
     )
     if return_plan:
         return loader, plan
@@ -351,6 +371,8 @@ def make_eval_dataloader(
     split_dir: str | Path | None = None,
     image_transform: str = "rgb_255",
     image_root: str | Path | None = None,
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
 ):
     """Construct a val/test DataLoader with no oversampling or augmentation."""
 
@@ -364,6 +386,8 @@ def make_eval_dataloader(
         image_transform=image_transform,
         augment=False,
         image_root=image_root,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
 
 

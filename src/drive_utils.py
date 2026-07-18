@@ -17,7 +17,9 @@ def _find_project_root(start: Optional[Path] = None) -> Path:
     return candidate
 
 
-def _load_env_defaults() -> Path:
+def load_drive_environment() -> Path:
+    """Load the project ``.env`` and install non-secret Drive path defaults."""
+
     project_root = _find_project_root()
     # Load .env from project root first, then current directory (non-destructive)
     load_dotenv(project_root / ".env", override=False)
@@ -36,21 +38,24 @@ def _load_env_defaults() -> Path:
 
 
 def get_drive(
-    use_local_server: bool = True, client_secrets_path: Optional[str] = None
+    use_local_server: bool = True,
+    client_secrets_path: Optional[str] = None,
+    credentials_cache_path: Optional[str] = None,
 ) -> GoogleDrive:
     """
     Create an authenticated GoogleDrive client using OAuth with refresh token caching.
     - Loads .env (root-aware) and supports explicit client_secrets_path override.
     - Persists tokens to GOOGLE_OAUTH_CREDENTIALS_CACHE.
     """
-    _load_env_defaults()
+    load_drive_environment()
     client_secrets = (
         client_secrets_path
         or os.environ.get("GOOGLE_OAUTH_CLIENT_SECRETS")
         or str((_find_project_root() / "secrets/client_secrets.json").resolve())
     )
     cred_cache = (
-        os.environ.get("GOOGLE_OAUTH_CREDENTIALS_CACHE")
+        credentials_cache_path
+        or os.environ.get("GOOGLE_OAUTH_CREDENTIALS_CACHE")
         or str((_find_project_root() / "secrets/credentials.json").resolve())
     )
 
@@ -141,5 +146,4 @@ def download_file_bytes(drive: GoogleDrive, file_id: str) -> bytes:
     f = drive.CreateFile({"id": file_id})
     f.FetchContent()  # loads into f.content (BytesIO)
     return f.content.getvalue()
-
 

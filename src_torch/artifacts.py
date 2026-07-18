@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,10 +49,16 @@ def json_ready(value: Any) -> Any:
 
 
 def save_json(path: Path, payload: dict[str, Any]) -> None:
-    """Write a JSON payload with stable formatting."""
+    """Write a JSON payload atomically with stable formatting."""
 
-    with open(path, "w") as file:
-        json.dump(json_ready(payload), file, indent=2)
+    temporary = path.with_name(f"{path.name}.tmp")
+    try:
+        with open(temporary, "w") as file:
+            json.dump(json_ready(payload), file, indent=2)
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def save_checkpoint(
@@ -64,6 +71,7 @@ def save_checkpoint(
     epoch: int,
     metrics: dict[str, Any],
     model_config: dict[str, Any],
+    training_state: dict[str, Any] | None = None,
 ) -> None:
     """Save a PyTorch checkpoint with enough context for later evaluation."""
 
@@ -72,18 +80,25 @@ def save_checkpoint(
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError("PyTorch is required to save checkpoints.") from exc
 
-    torch.save(
-        {
-            "run_tag": run_tag,
-            "phase": phase,
-            "epoch": int(epoch),
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
-            "metrics": json_ready(metrics),
-            "model_config": json_ready(model_config),
-        },
-        path,
-    )
+    payload = {
+        "run_tag": run_tag,
+        "phase": phase,
+        "epoch": int(epoch),
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+        "metrics": json_ready(metrics),
+        "model_config": json_ready(model_config),
+    }
+    if training_state is not None:
+        payload["training_state"] = training_state
+
+    temporary = path.with_name(f"{path.name}.tmp")
+    try:
+        torch.save(payload, temporary)
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def save_training_curves(history: dict[str, list[Any]], run_dir: Path, warmup_epochs: int) -> Path | None:

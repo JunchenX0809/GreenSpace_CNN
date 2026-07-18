@@ -388,6 +388,10 @@ def build_split_frames(
         missing = sorted(filelist_required.difference(filelist.columns))
         if missing:
             raise ValueError(f"Filelist missing required columns: {missing}")
+        if filelist["image_filename"].duplicated().any():
+            raise ValueError(
+                "Filelist must contain one row per image_filename before splitting."
+            )
         merged = merged.merge(
             filelist[["image_filename", "drive_file_id"]],
             on="image_filename",
@@ -489,6 +493,144 @@ def write_split_frames(
     return paths
 
 
+def _validate_run_tag(run_tag: str) -> str:
+    """Validate a run tag before using it in artifact filenames."""
+
+    value = str(run_tag).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value):
+        raise ValueError(
+            "run_tag must contain only letters, numbers, dots, underscores, "
+            "or hyphens"
+        )
+    return value
+
+
+def run_preprocessing_pipeline(
+    survey_path: str | Path,
+    image_dir: str | Path,
+    *,
+    run_tag: str,
+    interim_dir: str | Path,
+    processed_dir: str | Path,
+    filelist_path: str | Path | None = None,
+    split_dir: str | Path | None = None,
+    image_col: str = "Image Name",
+    split_seed: int = 123,
+    split_seed_2: int = 456,
+    sample_size: int | None = None,
+    sample_seed: int = 37,
+    require_all_images: bool = False,
+) -> dict[str, object]:
+    """Run the established survey-to-split preprocessing orchestration.
+
+    Labels are always aggregated for the full included survey. ``sample_size``
+    only limits the cached, labeled images used to create split manifests; this
+    is how the core notebook creates its deterministic 50-image demonstration.
+    """
+
+    source = Path(survey_path)
+    cache_root = Path(image_dir)
+    if not source.is_file():
+        raise FileNotFoundError(f"Missing survey CSV: {source}")
+    if not cache_root.is_dir():
+        raise FileNotFoundError(f"Missing image cache directory: {cache_root}")
+    tag = _validate_run_tag(run_tag)
+    if sample_size is not None and sample_size < 3:
+        raise ValueError("sample_size must be at least 3 when supplied")
+
+    survey = pd.read_csv(source)
+    if "image_filename" in survey.columns:
+        cleaned = survey.copy()
+    else:
+        cleaned = clean_survey_dataframe(survey, image_col=image_col)
+    soft, hard, inclusion_summary = aggregate_rater_labels(cleaned)
+
+    filelist: pd.DataFrame | None = None
+    resolved_filelist_path: Path | None = None
+    if filelist_path is not None:
+        resolved_filelist_path = Path(filelist_path)
+        if not resolved_filelist_path.is_file():
+            raise FileNotFoundError(
+                f"Missing filelist-with-Drive-IDs CSV: {resolved_filelist_path}"
+            )
+        filelist = pd.read_csv(resolved_filelist_path)
+
+    cached_mask = soft["image_filename"].apply(
+        lambda filename: (cache_root / str(filename)).is_file()
+    )
+    cached_soft = soft.loc[cached_mask].copy()
+    if sample_size is not None:
+        if len(cached_soft) < sample_size:
+            raise ValueError(
+                f"Requested sample_size={sample_size}, but only "
+                f"{len(cached_soft)} labeled images are cached in {cache_root}."
+            )
+        selected_names = cached_soft["image_filename"].sample(
+            n=sample_size,
+            random_state=sample_seed,
+        ).tolist()
+        split_soft = soft.set_index("image_filename").loc[selected_names].reset_index()
+        split_hard = hard.set_index("image_filename").loc[selected_names].reset_index()
+    else:
+        split_soft = soft
+        split_hard = hard
+
+    splits, split_summary = build_split_frames(
+        split_soft,
+        split_hard,
+        cache_root,
+        filelist=filelist,
+        split_seed=split_seed,
+        split_seed_2=split_seed_2,
+    )
+    if require_all_images and split_summary["missing_images"]:
+        raise FileNotFoundError(
+            f"{split_summary['missing_images']} labeled images are missing from "
+            f"{cache_root}. Download them or omit require_all_images."
+        )
+
+    interim_root = Path(interim_dir)
+    processed_root = Path(processed_dir)
+    resolved_split_dir = (
+        Path(split_dir) if split_dir is not None else processed_root / "splits"
+    )
+    cleaned_path = interim_root / f"survey_response_clean_{tag}.csv"
+    soft_path = processed_root / f"labels_soft_{tag}.csv"
+    hard_path = processed_root / f"labels_hard_{tag}.csv"
+
+    # Compute and validate every artifact before creating output directories.
+    interim_root.mkdir(parents=True, exist_ok=True)
+    processed_root.mkdir(parents=True, exist_ok=True)
+    cleaned.to_csv(cleaned_path, index=False)
+    soft.to_csv(soft_path, index=False)
+    hard.to_csv(hard_path, index=False)
+    split_paths = write_split_frames(splits, resolved_split_dir)
+
+    selection_summary = {
+        "aggregated_images": int(len(soft)),
+        "cached_labeled_images": int(cached_mask.sum()),
+        "uncached_labeled_images": int((~cached_mask).sum()),
+        "selected_split_images": int(split_summary["split_images"]),
+        "sample_size": sample_size,
+        "sample_seed": int(sample_seed) if sample_size is not None else None,
+    }
+    return {
+        "run_tag": tag,
+        "paths": {
+            "cleaned_survey": cleaned_path,
+            "labels_soft": soft_path,
+            "labels_hard": hard_path,
+            "train": split_paths["train"],
+            "val": split_paths["val"],
+            "test": split_paths["test"],
+            "filelist": resolved_filelist_path,
+        },
+        "inclusion_summary": inclusion_summary,
+        "selection_summary": selection_summary,
+        "split_summary": split_summary,
+    }
+
+
 __all__ = [
     "BINARY_LABELS",
     "VEGETATION_RATINGS",
@@ -500,6 +642,7 @@ __all__ = [
     "normalize_column_name",
     "normalize_dataframe_columns",
     "normalize_name",
+    "run_preprocessing_pipeline",
     "validate_aggregation_columns",
     "write_aggregated_labels",
     "write_split_frames",

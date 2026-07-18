@@ -11,6 +11,7 @@ from src.preprocessing import (
     build_split_frames,
     clean_survey_dataframe,
     normalize_dataframe_columns,
+    run_preprocessing_pipeline,
 )
 
 
@@ -108,6 +109,51 @@ class SplitTests(unittest.TestCase):
         self.assertFalse(memberships[0] & memberships[1])
         self.assertFalse(memberships[0] & memberships[2])
         self.assertFalse(memberships[1] & memberships[2])
+
+    def test_full_orchestration_writes_current_artifact_contract(self) -> None:
+        raw = pd.DataFrame([_raw_row(f"image_{index}.jpg") for index in range(10)])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            survey_path = root / "survey.csv"
+            filelist_path = root / "filelist.csv"
+            image_dir = root / "images"
+            image_dir.mkdir()
+            raw.to_csv(survey_path, index=False)
+            pd.DataFrame(
+                {
+                    "image_filename": [f"image_{index}.jpg" for index in range(10)],
+                    "drive_file_id": [f"drive-{index}" for index in range(10)],
+                }
+            ).to_csv(filelist_path, index=False)
+            for index in range(10):
+                (image_dir / f"image_{index}.jpg").touch()
+
+            result = run_preprocessing_pipeline(
+                survey_path,
+                image_dir,
+                run_tag="test_run",
+                interim_dir=root / "interim",
+                processed_dir=root / "processed",
+                filelist_path=filelist_path,
+                sample_size=5,
+                sample_seed=37,
+            )
+
+            paths = result["paths"]
+            self.assertTrue(paths["cleaned_survey"].is_file())
+            self.assertTrue(paths["labels_soft"].is_file())
+            self.assertTrue(paths["labels_hard"].is_file())
+            self.assertIn("drive_file_id", pd.read_csv(paths["train"]).columns)
+            self.assertEqual(
+                {
+                    split: len(pd.read_csv(paths[split]))
+                    for split in ("train", "val", "test")
+                },
+                {"train": 3, "val": 1, "test": 1},
+            )
+            self.assertEqual(result["selection_summary"]["aggregated_images"], 10)
+            self.assertEqual(result["selection_summary"]["selected_split_images"], 5)
 
 
 if __name__ == "__main__":

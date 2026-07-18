@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import random
+import time
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -40,6 +44,133 @@ def set_torch_seed(seed: int = TORCH_TRAINING_SMOKE_CONFIG["seed"]) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+RESUME_SCHEMA_VERSION = 1
+
+
+def split_frame_signature(frame: Any) -> dict[str, Any]:
+    """Return a portable signature of split content, excluding host paths."""
+
+    import pandas as pd
+
+    columns = [column for column in frame.columns if column != "image_path"]
+    stable = frame[columns].copy()
+    row_hashes = pd.util.hash_pandas_object(
+        stable,
+        index=True,
+        categorize=True,
+    ).to_numpy()
+    digest = hashlib.sha256(row_hashes.tobytes()).hexdigest()
+    return {"rows": int(len(frame)), "columns": columns, "sha256": digest}
+
+
+def capture_training_rng_state(train_loader: Any | None = None) -> dict[str, Any]:
+    """Capture epoch-boundary RNG and weighted-sampler state."""
+
+    torch = _require_torch()
+    state: dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch_cpu": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        state["torch_cuda"] = torch.cuda.get_rng_state_all()
+    if (
+        hasattr(torch, "mps")
+        and hasattr(torch.backends, "mps")
+        and torch.backends.mps.is_available()
+    ):
+        state["torch_mps"] = torch.mps.get_rng_state()
+    sampler = getattr(train_loader, "sampler", None)
+    generator = getattr(sampler, "generator", None)
+    if generator is not None:
+        state["sampler_generator"] = generator.get_state()
+    return state
+
+
+def restore_training_rng_state(
+    state: dict[str, Any],
+    train_loader: Any | None = None,
+) -> None:
+    """Restore RNG state saved at the end of a completed epoch."""
+
+    torch = _require_torch()
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch_cpu"])
+    if "torch_cuda" in state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["torch_cuda"])
+    if (
+        "torch_mps" in state
+        and hasattr(torch, "mps")
+        and hasattr(torch.backends, "mps")
+        and torch.backends.mps.is_available()
+    ):
+        torch.mps.set_rng_state(state["torch_mps"])
+    sampler = getattr(train_loader, "sampler", None)
+    generator = getattr(sampler, "generator", None)
+    if generator is not None and "sampler_generator" in state:
+        generator.set_state(state["sampler_generator"])
+
+
+def load_training_resume_checkpoint(
+    checkpoint_path: str | Path,
+) -> dict[str, Any]:
+    """Load and validate a checkpoint produced for epoch-boundary resume."""
+
+    torch = _require_torch()
+    path = Path(checkpoint_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing resume checkpoint: {path}")
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    state = payload.get("training_state")
+    if not isinstance(state, dict):
+        raise ValueError(
+            f"Checkpoint is not resumable because training_state is missing: {path}"
+        )
+    if int(state.get("schema_version", -1)) != RESUME_SCHEMA_VERSION:
+        raise ValueError(
+            "Unsupported resume checkpoint schema: "
+            f"{state.get('schema_version')!r}"
+        )
+    required = {
+        "phase",
+        "phase_epoch",
+        "global_epoch",
+        "history",
+        "best_mcmae",
+        "best_prauc",
+        "elapsed_seconds",
+        "data_signature",
+        "rng_state",
+    }
+    missing = sorted(required.difference(state))
+    if missing:
+        raise ValueError(f"Resume checkpoint training_state is incomplete: {missing}")
+    return payload
+
+
+def _merge_resume_config(
+    saved: dict[str, Any],
+    requested: dict[str, Any] | None,
+    *,
+    mutable_keys: set[str],
+    label: str,
+) -> dict[str, Any]:
+    """Use saved configuration and reject trajectory-changing overrides."""
+
+    merged = dict(saved)
+    for key, value in (requested or {}).items():
+        if key in mutable_keys:
+            merged[key] = value
+            continue
+        if key not in saved or saved[key] != value:
+            raise ValueError(
+                f"Cannot change {label} setting {key!r} when resuming: "
+                f"saved={saved.get(key)!r}, requested={value!r}"
+            )
+    return merged
 
 
 def set_backbone_trainable(model: Any, trainable: bool) -> None:
@@ -341,6 +472,34 @@ class PlateauTrainingControl:
             model.load_state_dict({name: tensor.to(device) for name, tensor in self.best_state_dict.items()})
             print(f"[EarlyStopping] Restored best weights from epoch {self.best_epoch}.")
 
+    def state_dict(self) -> dict[str, Any]:
+        """Return all mutable state needed to continue control decisions."""
+
+        return {
+            "monitor": self.monitor,
+            "best": self.best,
+            "wait": self.wait,
+            "lr_wait": self.lr_wait,
+            "lr_best": self.lr_best,
+            "best_state_dict": self.best_state_dict,
+            "best_epoch": self.best_epoch,
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore mutable control state from a resume checkpoint."""
+
+        if state.get("monitor") != self.monitor:
+            raise ValueError(
+                "Resume control monitor mismatch: "
+                f"saved={state.get('monitor')!r}, current={self.monitor!r}"
+            )
+        self.best = float(state["best"])
+        self.wait = int(state["wait"])
+        self.lr_wait = int(state["lr_wait"])
+        self.lr_best = float(state["lr_best"])
+        self.best_state_dict = state.get("best_state_dict")
+        self.best_epoch = state.get("best_epoch")
+
 
 class MaeGuardrailControl:
     """Fine-tune-only MAE guardrail matching TensorFlow `MaeGuardrail`."""
@@ -379,6 +538,16 @@ class MaeGuardrailControl:
             )
             return True
         return False
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "best_mc_mae": self.best_mc_mae,
+            "bad_epochs": self.bad_epochs,
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self.best_mc_mae = float(state["best_mc_mae"])
+        self.bad_epochs = int(state["bad_epochs"])
 
 
 def train_one_epoch(
@@ -455,54 +624,194 @@ def _append_history(history: dict[str, list[Any]], phase: str, epoch: int, train
 def run_persistent_warmup_finetune(
     run_tag: str | None = None,
     training_config: dict[str, Any] | None = None,
+    *,
+    data_config: dict[str, Any] | None = None,
+    split_dir: str | Path | None = None,
+    image_root: str | Path | None = None,
+    runs_root: str | Path | None = None,
+    resume_from: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Run a persistent PyTorch warm-up + fine-tune test and save artifacts."""
+    """Run or resume the established warm-up and fine-tuning orchestration.
+
+    Resume checkpoints are written after completed epochs. If a process stops
+    inside an epoch, resuming restarts from the previous completed epoch.
+    """
 
     torch = _require_torch()
-    cfg = dict(TORCH_TRAINING_CONFIG)
-    if training_config:
-        cfg.update(training_config)
+    resume_payload = (
+        load_training_resume_checkpoint(resume_from)
+        if resume_from is not None
+        else None
+    )
+    resume_state = (
+        dict(resume_payload["training_state"])
+        if resume_payload is not None
+        else None
+    )
+
+    if resume_payload is not None:
+        saved_model_config = dict(resume_payload.get("model_config") or {})
+        saved_training_config = dict(
+            saved_model_config.get("torch_training_config") or {}
+        )
+        saved_data_config = dict(saved_model_config.get("torch_data_config") or {})
+        if not saved_training_config or not saved_data_config:
+            raise ValueError(
+                "Resume checkpoint is missing saved training or data configuration."
+            )
+        cfg = _merge_resume_config(
+            saved_training_config,
+            training_config,
+            mutable_keys={"device"},
+            label="training",
+        )
+        data_cfg = _merge_resume_config(
+            saved_data_config,
+            data_config,
+            mutable_keys={"num_workers", "pin_memory"},
+            label="data",
+        )
+        saved_run_tag = str(resume_payload.get("run_tag") or "")
+        if not saved_run_tag:
+            raise ValueError("Resume checkpoint is missing run_tag.")
+        if run_tag is not None and run_tag != saved_run_tag:
+            raise ValueError(
+                f"Resume run_tag mismatch: saved={saved_run_tag!r}, "
+                f"requested={run_tag!r}"
+            )
+        run_tag = saved_run_tag
+        run_dir = Path(resume_from).resolve().parent
+        if bool(resume_state.get("run_complete", False)):
+            raise ValueError(
+                f"Training run {run_tag} is already complete; use its final or "
+                "best checkpoint instead of resuming."
+            )
+    else:
+        cfg = dict(TORCH_TRAINING_CONFIG)
+        if training_config:
+            cfg.update(training_config)
+        data_cfg = dict(TORCH_DATA_CONFIG)
+        if data_config:
+            data_cfg.update(data_config)
+        run_tag = run_tag or make_run_tag("PyTorch")
+        selected_runs_root = (
+            Path(runs_root)
+            if runs_root is not None
+            else PROJECT_ROOT / "models" / "runs"
+        )
+        run_dir = selected_runs_root / run_tag
+        if run_dir.exists():
+            raise FileExistsError(f"Training run directory already exists: {run_dir}")
+
+    batch_size = int(data_cfg["batch_size"])
+    num_workers = int(data_cfg["num_workers"])
+    pin_memory = bool(data_cfg["pin_memory"])
+    if batch_size < 1:
+        raise ValueError("Training batch_size must be at least 1.")
+    if num_workers < 0:
+        raise ValueError("Training num_workers cannot be negative.")
 
     set_torch_seed(int(cfg["seed"]))
-    run_tag = run_tag or make_run_tag("PyTorch")
-    run_dir = make_run_dir(run_tag)
     device = resolve_device(str(cfg.get("device", "auto")))
 
-    train_df = load_split_df("train")
-    val_df = load_split_df("val")
+    train_df = load_split_df("train", split_dir=split_dir)
+    val_df = load_split_df("val", split_dir=split_dir)
     schema = resolve_split_schema(train_df)
+    data_signature = {
+        "train": split_frame_signature(train_df),
+        "val": split_frame_signature(val_df),
+    }
+    if resume_state is not None and resume_state["data_signature"] != data_signature:
+        raise ValueError(
+            "Train/validation split content differs from the resume checkpoint. "
+            "Resume requires the same image filenames, labels, ordering, and rows."
+        )
 
-    batch_size = int(TORCH_DATA_CONFIG["batch_size"])
     train_loader, oversampling_plan = make_train_dataloader(
         batch_size=batch_size,
+        split_dir=split_dir,
         image_transform="rgb_255",
-        use_oversampling=bool(TORCH_DATA_CONFIG["use_oversampling"]),
-        use_augmentation=bool(TORCH_DATA_CONFIG["use_augmentation"]),
+        use_oversampling=bool(data_cfg["use_oversampling"]),
+        use_augmentation=bool(data_cfg["use_augmentation"]),
         seed=int(cfg["seed"]),
         return_plan=True,
+        image_root=image_root,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
-    val_loader = make_eval_dataloader("val", batch_size=batch_size, image_transform="rgb_255")
-
-    model = build_torchgeo_model(
-        model_name=TORCH_MODEL_CONFIG["torchgeo_model_name"],
-        weight_name=TORCH_MODEL_CONFIG["torchgeo_weight"],
-        load_pretrained_weights=TORCH_MODEL_CONFIG["load_pretrained_weights"],
-        preserve_input_resolution=TORCH_MODEL_CONFIG["preserve_input_resolution"],
-        input_size=TORCH_DATA_CONFIG["img_size"],
+    val_loader = make_eval_dataloader(
+        "val",
+        batch_size=batch_size,
+        split_dir=split_dir,
+        image_transform="rgb_255",
+        image_root=image_root,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
-    model.to(device)
 
     test_run_mode = bool(cfg["test_run_mode"])
-    warmup_epochs = int(cfg["test_warmup_epochs"] if test_run_mode else cfg["warmup_epochs"])
-    finetune_epochs = int(cfg["test_finetune_epochs"] if test_run_mode else cfg["finetune_epochs"])
+    warmup_epochs = int(
+        cfg["test_warmup_epochs"] if test_run_mode else cfg["warmup_epochs"]
+    )
+    finetune_epochs = int(
+        cfg["test_finetune_epochs"] if test_run_mode else cfg["finetune_epochs"]
+    )
+    if warmup_epochs < 1 or finetune_epochs < 1:
+        raise ValueError("Warm-up and fine-tuning epoch targets must both be positive.")
     max_train_batches = cfg.get("max_train_batches")
     max_val_batches = cfg.get("max_val_batches")
     max_train_batches = None if max_train_batches is None else int(max_train_batches)
     max_val_batches = None if max_val_batches is None else int(max_val_batches)
 
+    if resume_payload is not None:
+        model_config = dict(resume_payload["model_config"])
+        model_cfg = dict(model_config["torch_model_config"])
+        saved_binary_cols = list(model_config.get("binary_cols") or [])
+        if saved_binary_cols != schema.binary_cols:
+            raise ValueError(
+                "Active binary-label schema differs from the resume checkpoint: "
+                f"saved={saved_binary_cols}, current={schema.binary_cols}"
+            )
+    else:
+        model_cfg = dict(TORCH_MODEL_CONFIG)
+        model_config = {}
+
+    model = build_torchgeo_model(
+        model_name=str(model_cfg["torchgeo_model_name"]),
+        weight_name=str(model_cfg["torchgeo_weight"]),
+        load_pretrained_weights=(
+            False
+            if resume_payload is not None
+            else bool(model_cfg["load_pretrained_weights"])
+        ),
+        preserve_input_resolution=bool(model_cfg["preserve_input_resolution"]),
+        input_size=tuple(data_cfg["img_size"]),
+        num_binary=len(schema.binary_cols),
+        num_shade=int(model_cfg["num_shade"]),
+        score_output_range=tuple(model_cfg["score_output_range"]),
+        veg_output_range=tuple(model_cfg["veg_output_range"]),
+    )
+    model.to(device)
+    if resume_payload is not None:
+        model.load_state_dict(resume_payload["model_state_dict"])
+    else:
+        run_dir = make_run_dir(run_tag, runs_root=selected_runs_root)
+
     print(f"RUN_TAG: {run_tag}")
     print(f"RUN_DIR: {run_dir}")
+    print(f"started_at: {datetime.now().isoformat(timespec='seconds')}")
+    print(f"resume_from: {Path(resume_from).resolve() if resume_from else None}")
     print(f"device: {device}")
+    print(
+        "data:",
+        {
+            "split_dir": str(Path(split_dir).resolve()) if split_dir else "project default",
+            "image_root": str(Path(image_root).resolve()) if image_root else "manifest/default",
+            "batch_size": batch_size,
+            "num_workers": num_workers,
+            "pin_memory": pin_memory,
+        },
+    )
     print(f"test_run_mode={test_run_mode} -> warmup={warmup_epochs}, finetune={finetune_epochs}")
     print(f"batch caps: train={max_train_batches}, val={max_val_batches}")
     print("model metadata:", model.metadata())
@@ -526,134 +835,284 @@ def run_persistent_warmup_finetune(
         },
     )
 
-    best_mcmae = float("inf")
-    best_prauc = float("-inf")
     best_mcmae_path = run_dir / f"best_mcmae_{run_tag}.pt"
     best_prauc_path = run_dir / f"best_prauc_{run_tag}.pt"
     final_path = run_dir / f"final_{run_tag}.pt"
-    history: dict[str, list[Any]] = {}
+    last_path = run_dir / f"last_{run_tag}.pt"
+    config_path = run_dir / f"model_config_{run_tag}.json"
+    history_path = run_dir / f"training_history_{run_tag}.json"
 
-    model_config = {
-        "run_tag": run_tag,
-        "framework": "pytorch",
-        "model_family": f"TorchGeo {TORCH_MODEL_CONFIG['torchgeo_model_name']}",
-        "model_metadata": model.metadata(),
-        "img_size": TORCH_DATA_CONFIG["img_size"],
-        "binary_cols": schema.binary_cols,
-        "score_head_mode": EXPERIMENT_CONFIG["score_head_mode"],
-        "veg_head_mode": EXPERIMENT_CONFIG["veg_head_mode"],
-        "experiment_config": dict(EXPERIMENT_CONFIG),
-        "torch_data_config": dict(TORCH_DATA_CONFIG),
-        "torch_model_config": dict(TORCH_MODEL_CONFIG),
-        "torch_training_config": dict(cfg),
-        "warmup_epochs": warmup_epochs,
-        "finetune_epochs": finetune_epochs,
-        "test_run_mode": test_run_mode,
-        "fine_tune_backbone": bool(cfg["fine_tune_backbone"]),
-        "training_control_monitor": f"val_{monitor_name}",
-        "use_oversampling": bool(TORCH_DATA_CONFIG["use_oversampling"]),
-        "use_augmentation": bool(TORCH_DATA_CONFIG["use_augmentation"]),
-    }
+    if resume_state is None:
+        history: dict[str, list[Any]] = {}
+        global_epoch = 0
+        phase = "warmup"
+        phase_epoch = 0
+        best_mcmae = float("inf")
+        best_prauc = float("-inf")
+        elapsed_before = 0.0
+        model_config = {
+            "run_tag": run_tag,
+            "framework": "pytorch",
+            "model_family": f"TorchGeo {model_cfg['torchgeo_model_name']}",
+            "model_metadata": model.metadata(),
+            "img_size": data_cfg["img_size"],
+            "binary_cols": schema.binary_cols,
+            "score_head_mode": EXPERIMENT_CONFIG["score_head_mode"],
+            "veg_head_mode": EXPERIMENT_CONFIG["veg_head_mode"],
+            "experiment_config": dict(EXPERIMENT_CONFIG),
+            "torch_data_config": dict(data_cfg),
+            "torch_model_config": dict(model_cfg),
+            "torch_training_config": dict(cfg),
+            "warmup_epochs": warmup_epochs,
+            "finetune_epochs": finetune_epochs,
+            "test_run_mode": test_run_mode,
+            "fine_tune_backbone": bool(cfg["fine_tune_backbone"]),
+            "training_control_monitor": f"val_{monitor_name}",
+            "use_oversampling": bool(data_cfg["use_oversampling"]),
+            "use_augmentation": bool(data_cfg["use_augmentation"]),
+            "resume_schema_version": RESUME_SCHEMA_VERSION,
+            "data_signature": data_signature,
+        }
+    else:
+        history = dict(resume_state["history"])
+        global_epoch = int(resume_state["global_epoch"])
+        phase = str(resume_state["phase"])
+        phase_epoch = int(resume_state["phase_epoch"])
+        best_mcmae = float(resume_state["best_mcmae"])
+        best_prauc = float(resume_state["best_prauc"])
+        elapsed_before = float(resume_state["elapsed_seconds"])
+        if phase not in {"warmup", "finetune"}:
+            raise ValueError(f"Unsupported resume phase: {phase!r}")
 
-    global_epoch = 0
+    session_started = time.monotonic()
 
-    set_backbone_trainable(model, False)
-    print("Warm-up trainable summary:", trainable_parameter_summary(model))
-    warmup_optimizer = make_optimizer(model, lr=float(cfg["warmup_learning_rate"]))
-    warmup_control = PlateauTrainingControl(
-        monitor=monitor_name,
-        early_patience=int(cfg["early_stopping_patience"]),
-        early_min_delta=float(cfg["early_stopping_min_delta"]),
-        reduce_lr_patience=int(cfg["reduce_lr_patience"]),
-        reduce_lr_factor=float(cfg["reduce_lr_factor"]),
-        reduce_lr_min_delta=float(cfg["reduce_lr_min_delta"]),
-        restore_best_weights=bool(cfg["restore_best_weights"]),
-    )
-    for _ in range(warmup_epochs):
-        global_epoch += 1
-        train_metrics = train_one_epoch(
-            model,
-            train_loader,
-            schema.binary_cols,
-            warmup_optimizer,
-            device,
-            max_batches=max_train_batches,
-        )
-        val_metrics = evaluate_one_epoch(
-            model,
-            val_loader,
-            schema.binary_cols,
-            device,
-            train_df=train_df,
-            eval_df=val_df,
-            max_batches=max_val_batches,
-        )
-        if bool(cfg["use_combo_training_control"]):
-            val_metrics.update(
-                compute_training_combo(
-                    val_metrics,
-                    w_bin=float(cfg["combo_w_bin"]),
-                    w_ord=float(cfg["combo_w_ord"]),
-                    mae_scale=float(cfg["combo_mcmae_scale"]),
-                )
-            )
-        _append_history(history, "warmup", global_epoch, train_metrics, val_metrics)
-        print(
-            f"warmup epoch {global_epoch}: "
-            f"train_loss={train_metrics['loss_total']:.4f} "
-            f"val_loss={val_metrics['loss_total']:.4f} "
-            f"val_{monitor_name}={float(val_metrics.get(monitor_name, float('nan'))):.4f} "
-            f"lr={_get_optimizer_lr(warmup_optimizer):.6g}"
+    def make_control() -> PlateauTrainingControl:
+        return PlateauTrainingControl(
+            monitor=monitor_name,
+            early_patience=int(cfg["early_stopping_patience"]),
+            early_min_delta=float(cfg["early_stopping_min_delta"]),
+            reduce_lr_patience=int(cfg["reduce_lr_patience"]),
+            reduce_lr_factor=float(cfg["reduce_lr_factor"]),
+            reduce_lr_min_delta=float(cfg["reduce_lr_min_delta"]),
+            restore_best_weights=bool(cfg["restore_best_weights"]),
         )
 
+    def elapsed_seconds() -> float:
+        return elapsed_before + (time.monotonic() - session_started)
+
+    def append_epoch_timing(epoch_seconds: float) -> None:
+        history.setdefault("epoch_seconds", []).append(float(epoch_seconds))
+        history.setdefault("elapsed_seconds", []).append(float(elapsed_seconds()))
+        history.setdefault("completed_at", []).append(
+            datetime.now().isoformat(timespec="seconds")
+        )
+
+    def maybe_save_best(
+        active_phase: str,
+        optimizer: Any,
+        val_metrics: dict[str, Any],
+    ) -> None:
+        nonlocal best_mcmae, best_prauc
         val_mcmae = float(val_metrics["metric_score_veg_mae_mean"])
         if val_mcmae < best_mcmae:
             best_mcmae = val_mcmae
             save_checkpoint(
                 best_mcmae_path,
                 model=model,
-                optimizer=warmup_optimizer,
+                optimizer=optimizer,
                 run_tag=run_tag,
-                phase="warmup",
+                phase=active_phase,
                 epoch=global_epoch,
                 metrics=val_metrics,
                 model_config=model_config,
             )
-        val_prauc = float(val_metrics.get("metric_bin_head_weighted_pr_auc", float("nan")))
+        val_prauc = float(
+            val_metrics.get("metric_bin_head_weighted_pr_auc", float("nan"))
+        )
         if np.isfinite(val_prauc) and val_prauc > best_prauc:
             best_prauc = val_prauc
             save_checkpoint(
                 best_prauc_path,
                 model=model,
-                optimizer=warmup_optimizer,
+                optimizer=optimizer,
                 run_tag=run_tag,
-                phase="warmup",
+                phase=active_phase,
                 epoch=global_epoch,
                 metrics=val_metrics,
                 model_config=model_config,
             )
 
-        if warmup_control.update(model, warmup_optimizer, global_epoch, val_metrics):
-            break
-    warmup_control.restore(model, device)
+    def save_last_checkpoint(
+        *,
+        active_phase: str,
+        active_phase_epoch: int,
+        phase_complete: bool,
+        optimizer: Any,
+        control: PlateauTrainingControl,
+        guardrail: MaeGuardrailControl | None,
+        metrics: dict[str, Any],
+        run_complete: bool = False,
+    ) -> None:
+        training_state = {
+            "schema_version": RESUME_SCHEMA_VERSION,
+            "phase": active_phase,
+            "phase_epoch": int(active_phase_epoch),
+            "global_epoch": int(global_epoch),
+            "phase_complete": bool(phase_complete),
+            "run_complete": bool(run_complete),
+            "history": history,
+            "best_mcmae": float(best_mcmae),
+            "best_prauc": float(best_prauc),
+            "elapsed_seconds": float(elapsed_seconds()),
+            "data_signature": data_signature,
+            "control_state": control.state_dict(),
+            "guardrail_state": (
+                guardrail.state_dict() if guardrail is not None else None
+            ),
+            "rng_state": capture_training_rng_state(train_loader),
+        }
+        save_checkpoint(
+            last_path,
+            model=model,
+            optimizer=optimizer,
+            run_tag=run_tag,
+            phase=active_phase,
+            epoch=global_epoch,
+            metrics=metrics,
+            model_config=model_config,
+            training_state=training_state,
+        )
+
+    rng_restored = False
+    warmup_control = make_control()
+    if phase == "warmup":
+        set_backbone_trainable(model, False)
+        print("Warm-up trainable summary:", trainable_parameter_summary(model))
+        warmup_optimizer = make_optimizer(
+            model,
+            lr=float(cfg["warmup_learning_rate"]),
+        )
+        if resume_payload is not None:
+            warmup_optimizer.load_state_dict(resume_payload["optimizer_state_dict"])
+            warmup_control.load_state_dict(resume_state["control_state"])
+            restore_training_rng_state(resume_state["rng_state"], train_loader)
+            rng_restored = True
+            print(
+                f"Resuming warm-up after phase epoch {phase_epoch} "
+                f"(global epoch {global_epoch})."
+            )
+
+        warmup_loop_start = (
+            warmup_epochs
+            if resume_state is not None
+            and bool(resume_state.get("phase_complete", False))
+            else phase_epoch
+        )
+        for current_phase_epoch in range(warmup_loop_start + 1, warmup_epochs + 1):
+            epoch_started = time.monotonic()
+            global_epoch += 1
+            train_metrics = train_one_epoch(
+                model,
+                train_loader,
+                schema.binary_cols,
+                warmup_optimizer,
+                device,
+                max_batches=max_train_batches,
+            )
+            val_metrics = evaluate_one_epoch(
+                model,
+                val_loader,
+                schema.binary_cols,
+                device,
+                train_df=train_df,
+                eval_df=val_df,
+                max_batches=max_val_batches,
+            )
+            if bool(cfg["use_combo_training_control"]):
+                val_metrics.update(
+                    compute_training_combo(
+                        val_metrics,
+                        w_bin=float(cfg["combo_w_bin"]),
+                        w_ord=float(cfg["combo_w_ord"]),
+                        mae_scale=float(cfg["combo_mcmae_scale"]),
+                    )
+                )
+            _append_history(
+                history,
+                "warmup",
+                global_epoch,
+                train_metrics,
+                val_metrics,
+            )
+            maybe_save_best("warmup", warmup_optimizer, val_metrics)
+            stop_for_plateau = warmup_control.update(
+                model,
+                warmup_optimizer,
+                global_epoch,
+                val_metrics,
+            )
+            epoch_seconds = time.monotonic() - epoch_started
+            append_epoch_timing(epoch_seconds)
+            phase_complete = bool(
+                stop_for_plateau or current_phase_epoch >= warmup_epochs
+            )
+            print(
+                f"warmup epoch {global_epoch}: "
+                f"train_loss={train_metrics['loss_total']:.4f} "
+                f"val_loss={val_metrics['loss_total']:.4f} "
+                f"val_{monitor_name}={float(val_metrics.get(monitor_name, float('nan'))):.4f} "
+                f"lr={_get_optimizer_lr(warmup_optimizer):.6g} "
+                f"seconds={epoch_seconds:.1f} elapsed={elapsed_seconds():.1f}"
+            )
+            save_last_checkpoint(
+                active_phase="warmup",
+                active_phase_epoch=current_phase_epoch,
+                phase_complete=phase_complete,
+                optimizer=warmup_optimizer,
+                control=warmup_control,
+                guardrail=None,
+                metrics=val_metrics,
+            )
+            phase_epoch = current_phase_epoch
+            if stop_for_plateau:
+                break
+        warmup_control.restore(model, device)
+        phase = "finetune"
+        phase_epoch = 0
 
     set_backbone_trainable(model, bool(cfg["fine_tune_backbone"]))
     print("Fine-tune trainable summary:", trainable_parameter_summary(model))
-    finetune_optimizer = make_optimizer(model, lr=float(cfg["finetune_learning_rate"]))
-    finetune_control = PlateauTrainingControl(
-        monitor=monitor_name,
-        early_patience=int(cfg["early_stopping_patience"]),
-        early_min_delta=float(cfg["early_stopping_min_delta"]),
-        reduce_lr_patience=int(cfg["reduce_lr_patience"]),
-        reduce_lr_factor=float(cfg["reduce_lr_factor"]),
-        reduce_lr_min_delta=float(cfg["reduce_lr_min_delta"]),
-        restore_best_weights=bool(cfg["restore_best_weights"]),
+    finetune_optimizer = make_optimizer(
+        model,
+        lr=float(cfg["finetune_learning_rate"]),
     )
+    finetune_control = make_control()
     mae_guardrail = MaeGuardrailControl(
         mae_delta=float(cfg["mae_guardrail_delta"]),
         mae_patience=int(cfg["mae_guardrail_patience"]),
     )
-    for _ in range(finetune_epochs):
+    if resume_payload is not None and phase == "finetune" and not rng_restored:
+        finetune_optimizer.load_state_dict(resume_payload["optimizer_state_dict"])
+        finetune_control.load_state_dict(resume_state["control_state"])
+        guardrail_state = resume_state.get("guardrail_state")
+        if not isinstance(guardrail_state, dict):
+            raise ValueError("Fine-tune resume checkpoint is missing guardrail state.")
+        mae_guardrail.load_state_dict(guardrail_state)
+        restore_training_rng_state(resume_state["rng_state"], train_loader)
+        print(
+            f"Resuming fine-tuning after phase epoch {phase_epoch} "
+            f"(global epoch {global_epoch})."
+        )
+
+    finetune_loop_start = (
+        finetune_epochs
+        if resume_state is not None
+        and str(resume_state.get("phase")) == "finetune"
+        and bool(resume_state.get("phase_complete", False))
+        else phase_epoch
+    )
+    for current_phase_epoch in range(finetune_loop_start + 1, finetune_epochs + 1):
+        epoch_started = time.monotonic()
         global_epoch += 1
         train_metrics = train_one_epoch(
             model,
@@ -681,48 +1140,68 @@ def run_persistent_warmup_finetune(
                     mae_scale=float(cfg["combo_mcmae_scale"]),
                 )
             )
-        _append_history(history, "finetune", global_epoch, train_metrics, val_metrics)
+        _append_history(
+            history,
+            "finetune",
+            global_epoch,
+            train_metrics,
+            val_metrics,
+        )
+        maybe_save_best("finetune", finetune_optimizer, val_metrics)
+        stop_for_plateau = finetune_control.update(
+            model,
+            finetune_optimizer,
+            global_epoch,
+            val_metrics,
+        )
+        stop_for_guardrail = mae_guardrail.update(global_epoch, val_metrics)
+        epoch_seconds = time.monotonic() - epoch_started
+        append_epoch_timing(epoch_seconds)
+        phase_complete = bool(
+            stop_for_plateau
+            or stop_for_guardrail
+            or current_phase_epoch >= finetune_epochs
+        )
         print(
             f"finetune epoch {global_epoch}: "
             f"train_loss={train_metrics['loss_total']:.4f} "
             f"val_loss={val_metrics['loss_total']:.4f} "
             f"val_{monitor_name}={float(val_metrics.get(monitor_name, float('nan'))):.4f} "
-            f"lr={_get_optimizer_lr(finetune_optimizer):.6g}"
+            f"lr={_get_optimizer_lr(finetune_optimizer):.6g} "
+            f"seconds={epoch_seconds:.1f} elapsed={elapsed_seconds():.1f}"
         )
-
-        val_mcmae = float(val_metrics["metric_score_veg_mae_mean"])
-        if val_mcmae < best_mcmae:
-            best_mcmae = val_mcmae
-            save_checkpoint(
-                best_mcmae_path,
-                model=model,
-                optimizer=finetune_optimizer,
-                run_tag=run_tag,
-                phase="finetune",
-                epoch=global_epoch,
-                metrics=val_metrics,
-                model_config=model_config,
-            )
-        val_prauc = float(val_metrics.get("metric_bin_head_weighted_pr_auc", float("nan")))
-        if np.isfinite(val_prauc) and val_prauc > best_prauc:
-            best_prauc = val_prauc
-            save_checkpoint(
-                best_prauc_path,
-                model=model,
-                optimizer=finetune_optimizer,
-                run_tag=run_tag,
-                phase="finetune",
-                epoch=global_epoch,
-                metrics=val_metrics,
-                model_config=model_config,
-            )
-
-        stop_for_plateau = finetune_control.update(model, finetune_optimizer, global_epoch, val_metrics)
-        stop_for_guardrail = mae_guardrail.update(global_epoch, val_metrics)
+        save_last_checkpoint(
+            active_phase="finetune",
+            active_phase_epoch=current_phase_epoch,
+            phase_complete=phase_complete,
+            optimizer=finetune_optimizer,
+            control=finetune_control,
+            guardrail=mae_guardrail,
+            metrics=val_metrics,
+        )
+        phase_epoch = current_phase_epoch
         if stop_for_plateau or stop_for_guardrail:
             break
     finetune_control.restore(model, device)
 
+    model_config.update(
+        {
+            "final_model_path": str(final_path),
+            "best_prauc_path": (
+                str(best_prauc_path) if best_prauc_path.exists() else None
+            ),
+            "best_mc_mae_path": (
+                str(best_mcmae_path) if best_mcmae_path.exists() else None
+            ),
+            "last_checkpoint_path": str(last_path),
+            "total_elapsed_seconds": float(elapsed_seconds()),
+        }
+    )
+    final_metrics = {
+        key: values[-1]
+        for key, values in history.items()
+        if isinstance(values, list) and values
+    }
     save_checkpoint(
         final_path,
         model=model,
@@ -730,30 +1209,34 @@ def run_persistent_warmup_finetune(
         run_tag=run_tag,
         phase="final",
         epoch=global_epoch,
-        metrics={key: values[-1] for key, values in history.items() if values},
+        metrics=final_metrics,
         model_config=model_config,
     )
 
-    model_config.update(
-        {
-            "final_model_path": str(final_path),
-            "best_prauc_path": str(best_prauc_path) if best_prauc_path.exists() else None,
-            "best_mc_mae_path": str(best_mcmae_path) if best_mcmae_path.exists() else None,
-        }
-    )
-    config_path = run_dir / f"model_config_{run_tag}.json"
-    history_path = run_dir / f"training_history_{run_tag}.json"
     save_json(config_path, model_config)
     save_json(history_path, history)
     curves_path = save_training_curves(history, run_dir, warmup_epochs=warmup_epochs)
+    save_last_checkpoint(
+        active_phase="finetune",
+        active_phase_epoch=phase_epoch,
+        phase_complete=True,
+        optimizer=finetune_optimizer,
+        control=finetune_control,
+        guardrail=mae_guardrail,
+        metrics=final_metrics,
+        run_complete=True,
+    )
 
     print("Saved final checkpoint:", final_path)
+    print("Saved resumable checkpoint:", last_path)
     print("Saved best MC-MAE checkpoint:", best_mcmae_path.exists(), best_mcmae_path)
     print("Saved best PR-AUC checkpoint:", best_prauc_path.exists(), best_prauc_path)
     print("Saved config:", config_path)
     print("Saved history:", history_path)
     if curves_path:
         print("Saved curves:", curves_path)
+    print(f"completed_at: {datetime.now().isoformat(timespec='seconds')}")
+    print(f"total_elapsed_seconds: {elapsed_seconds():.1f}")
 
     return {
         "run_tag": run_tag,
@@ -761,9 +1244,12 @@ def run_persistent_warmup_finetune(
         "final_model_path": str(final_path),
         "best_mc_mae_path": str(best_mcmae_path) if best_mcmae_path.exists() else None,
         "best_prauc_path": str(best_prauc_path) if best_prauc_path.exists() else None,
+        "last_checkpoint_path": str(last_path),
         "model_config_path": str(config_path),
         "training_history_path": str(history_path),
         "training_curves_path": str(curves_path) if curves_path else None,
+        "resumed": resume_from is not None,
+        "total_elapsed_seconds": float(elapsed_seconds()),
         "history": history,
     }
 
