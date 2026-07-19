@@ -343,6 +343,41 @@ def tune_thresholds_f1(y_true_mat: np.ndarray, y_prob_mat: np.ndarray, label_nam
     return pd.DataFrame(rows)
 
 
+def tune_val_thresholds(
+    val_prediction: tuple[pd.DataFrame, dict[str, np.ndarray], dict[str, float]],
+    bin_names: list[str],
+    binary_cols: list[str],
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    """Calibrate per-label binary thresholds on the validation split.
+
+    Prefer hard-label columns when the split carries them; otherwise derive
+    targets from the soft ``_p`` columns at 0.5. Returns the full threshold
+    table plus the finite best-threshold lookup used to score the splits.
+    """
+
+    val_df, val_preds, _ = val_prediction
+    hard_names = [name for name in bin_names if name in val_df.columns]
+    if hard_names:
+        y_true = val_df[hard_names].fillna(0).astype(int).values
+        y_prob = np.stack(
+            [val_preds["bin_head"][:, bin_names.index(name)] for name in hard_names],
+            axis=1,
+        )
+        label_names = hard_names
+    else:
+        y_true = (val_df[binary_cols].fillna(0.0).astype(np.float32).values >= 0.5).astype(int)
+        y_prob = val_preds["bin_head"]
+        label_names = bin_names
+
+    thresholds_df = tune_thresholds_f1(y_true, y_prob, label_names)
+    best_thresholds = {
+        row["label"]: float(row["best_threshold"])
+        for _, row in thresholds_df.iterrows()
+        if np.isfinite(row["best_threshold"])
+    }
+    return thresholds_df, best_thresholds
+
+
 def _pred_ordinal_class(pred_arr: np.ndarray) -> np.ndarray:
     return np.rint(np.clip(pred_arr.squeeze(), 1, 5)).astype(np.int64) - 1
 

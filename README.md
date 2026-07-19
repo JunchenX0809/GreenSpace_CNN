@@ -316,6 +316,39 @@ joins without downloading, or `--limit 50` for a small cache test.
 
 Full walkthrough + troubleshooting: see [Google Drive authentication guide](instruction_docs/google_drive_auth.md).
 
+### 3d) Windows notes
+
+The steps above assume macOS/Linux. On Windows the code is the same; only the
+shell differs:
+
+- Activate the venv with `.venv\Scripts\activate`, not `source`.
+- Set the 3a environment variables with PowerShell
+  (`$env:GREENSPACE_DATA_ROOT="C:\greenspace-data"`) or cmd
+  (`set GREENSPACE_DATA_ROOT=C:\greenspace-data`), not `export`.
+- With an NVIDIA GPU, install the CUDA build of PyTorch from the official index
+  before `pip install -r requirements.txt` — pick the `--index-url` for your CUDA
+  version on pytorch.org. The default PyPI wheel is CPU-only, which trains very
+  slowly at 512x512.
+- The PyTorch review path does not need TensorFlow, so skip the 2b TF steps.
+
+For a from-scratch Drive download on the new machine, remember the credentials
+are not in git and the `.env` paths are host-specific:
+
+- Copy `secrets/client_secrets.json` to the same path on the new machine.
+- Create a fresh `.env` with just `GOOGLE_DRIVE_FOLDER_ID="..."` (plus the optional
+  `GOOGLE_DRIVE_INCLUDE_SHARED` / `GOOGLE_DRIVE_MIME_PREFIX`). Do not copy the
+  `PROJECT_ROOT`, `GOOGLE_OAUTH_CLIENT_SECRETS`, or `GOOGLE_OAUTH_CREDENTIALS_CACHE`
+  lines — those hold absolute macOS paths and would override the cross-platform
+  defaults. Left unset, the code resolves `secrets/client_secrets.json` and writes
+  the token cache to `secrets/credentials.json` automatically.
+- Do not copy `secrets/credentials.json`; the browser sign-in regenerates it.
+
+Everything else — the `scripts/*.py` commands, the split/env-var contract, and
+the model bundle — is identical across platforms. A clean way to confirm the
+machine is ready is to run the offline tests with the standard library:
+`python -m unittest discover -s tests -p "test_*.py"` (this needs no extra
+packages; `pytest` is not in requirements).
+
 ### 4) Preprocess the survey and build train/validation/test splits
 
 Run the established cleaning, inclusion filtering, rater aggregation, and
@@ -379,6 +412,19 @@ completed epochs, so an interruption inside an epoch repeats that epoch.
 Because resumable checkpoints include optimizer and training-control state,
 they can be substantially larger than inference-only checkpoints; check free
 disk space before a long run.
+
+Evaluate a trained checkpoint on the current splits and calibrate the binary
+thresholds:
+
+```bash
+python scripts/evaluate_torch.py --checkpoint models/runs/<run-tag>/best_mcmae_<run-tag>.pt
+```
+
+Omit `--checkpoint` to auto-select the newest run's best-MC-MAE checkpoint. This
+writes `thresholds_<variant>.csv` beside the checkpoint (the threshold half of a
+prediction bundle), plus loss-monitor and per-split report CSVs. It resolves
+splits and images from `data/` by default; point it elsewhere with
+`GREENSPACE_DATA_ROOT` (see 3a).
 
 - Historical/interactive train entry: `notebooks/03_torch_model_training.ipynb`
 - Evaluate: `notebooks/04_pyTorch_model_evaluation_v1.ipynb` (uses `data/processed/splits/test.csv`)
