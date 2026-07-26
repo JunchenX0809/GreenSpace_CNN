@@ -13,7 +13,7 @@ import numpy as np
 
 from src_torch.artifacts import make_run_dir, make_run_tag, save_checkpoint, save_json, save_training_curves
 from src_torch.config import (
-    EXPERIMENT_CONFIG,
+    MODEL_TASK_CONFIG,
     PROJECT_ROOT,
     TORCH_DATA_CONFIG,
     TORCH_LOSS_WEIGHTS,
@@ -857,9 +857,9 @@ def run_persistent_warmup_finetune(
             "model_metadata": model.metadata(),
             "img_size": data_cfg["img_size"],
             "binary_cols": schema.binary_cols,
-            "score_head_mode": EXPERIMENT_CONFIG["score_head_mode"],
-            "veg_head_mode": EXPERIMENT_CONFIG["veg_head_mode"],
-            "experiment_config": dict(EXPERIMENT_CONFIG),
+            "score_head_mode": MODEL_TASK_CONFIG["score_head_mode"],
+            "veg_head_mode": MODEL_TASK_CONFIG["veg_head_mode"],
+            "experiment_config": dict(MODEL_TASK_CONFIG),
             "torch_data_config": dict(data_cfg),
             "torch_model_config": dict(model_cfg),
             "torch_training_config": dict(cfg),

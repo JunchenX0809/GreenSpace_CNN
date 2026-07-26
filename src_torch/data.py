@@ -10,7 +10,7 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 from src_torch.config import (
-    EXPERIMENT_CONFIG,
+    MODEL_TASK_CONFIG,
     TORCH_DATA_CONFIG,
     resolve_data_root,
     resolve_label_cols,
@@ -75,7 +75,7 @@ def resolve_split_schema(df: pd.DataFrame) -> SplitSchema:
     """Resolve binary labels using the same exclusion config as NB03."""
 
     schema = resolve_label_cols(df)
-    excluded = set(EXPERIMENT_CONFIG.get("exclude_binary", []))
+    excluded = set(MODEL_TASK_CONFIG.get("exclude_binary", []))
     binary_cols = [c for c in schema["binary_cols"] if c not in excluded]
     bin_names = [c[:-2] for c in binary_cols]
     return SplitSchema(binary_cols=binary_cols, bin_names=bin_names)

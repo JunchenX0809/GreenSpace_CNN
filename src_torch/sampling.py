@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src_torch.config import EXPERIMENT_CONFIG, TORCH_TRAINING_SMOKE_CONFIG
+from src_torch.config import MODEL_TASK_CONFIG, TORCH_TRAINING_SMOKE_CONFIG
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ def build_oversampling_plan(
     df: pd.DataFrame,
     oversample_cfg: list[dict[str, Any]] | None = None,
 ) -> OversamplingPlan:
-    """Resolve first-match-wins stream assignments from `EXPERIMENT_CONFIG`.
+    """Resolve first-match-wins stream assignments from `MODEL_TASK_CONFIG`.
 
     TensorFlow NB03 builds repeated streams and samples them by stream weight.
     PyTorch uses equivalent per-row probabilities for `WeightedRandomSampler`.
@@ -62,7 +62,7 @@ def build_oversampling_plan(
 
     cfgs = [
         dict(cfg)
-        for cfg in (oversample_cfg if oversample_cfg is not None else EXPERIMENT_CONFIG.get("oversample", []))
+        for cfg in (oversample_cfg if oversample_cfg is not None else MODEL_TASK_CONFIG.get("oversample", []))
         if cfg.get("label") in df.columns
     ]
     row_weights = np.ones(len(df), dtype=np.float64) / max(len(df), 1)
@@ -160,7 +160,7 @@ def oversampling_sanity_check(
 
     cfgs = [
         dict(cfg)
-        for cfg in (oversample_cfg if oversample_cfg is not None else EXPERIMENT_CONFIG.get("oversample", []))
+        for cfg in (oversample_cfg if oversample_cfg is not None else MODEL_TASK_CONFIG.get("oversample", []))
         if cfg.get("label") in binary_cols
     ]
     label_counts = {cfg["label"]: 0 for cfg in cfgs}

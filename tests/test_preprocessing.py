@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -144,6 +145,7 @@ class SplitTests(unittest.TestCase):
             self.assertTrue(paths["cleaned_survey"].is_file())
             self.assertTrue(paths["labels_soft"].is_file())
             self.assertTrue(paths["labels_hard"].is_file())
+            self.assertTrue(paths["preprocessing_summary"].is_file())
             self.assertIn("drive_file_id", pd.read_csv(paths["train"]).columns)
             self.assertEqual(
                 {
@@ -154,6 +156,12 @@ class SplitTests(unittest.TestCase):
             )
             self.assertEqual(result["selection_summary"]["aggregated_images"], 10)
             self.assertEqual(result["selection_summary"]["selected_split_images"], 5)
+            summary = json.loads(paths["preprocessing_summary"].read_text(encoding="utf-8"))
+            self.assertEqual(summary["schema_version"], 1)
+            self.assertEqual(summary["parameters"]["exact_duplicate_row_policy"], "retain")
+            self.assertEqual(summary["parameters"]["sample_size"], 5)
+            self.assertEqual(summary["split_summary"]["split_images"], 5)
+            self.assertEqual(len(summary["input"]["survey_sha256"]), 64)
 
 
 if __name__ == "__main__":

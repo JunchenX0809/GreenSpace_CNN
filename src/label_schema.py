@@ -29,10 +29,12 @@ def resolve_label_cols(df):
     }
 
 
-# ---- Experiment-wide toggles (single source of truth) ----
-# Change values in EXPERIMENT_CONFIG, then re-run notebooks that import CFG.
+# ---- Shared task definition -------------------------------------------------
+# These values describe the prediction task and are shared by the historical
+# TensorFlow notebooks and the active PyTorch pipeline. Training schedules do
+# not belong here; the active schedule lives only in src_torch/config.py.
 
-EXPERIMENT_CONFIG = {
+MODEL_TASK_CONFIG = {
     # Head modes — one of: 'sparse', 'soft', 'regression'
     # 'sparse': hard int labels (score_class), sparse CE, Dense(5, softmax)
     # 'soft':   prob vectors (score_p_1..5), CE, Dense(5, softmax)
@@ -47,7 +49,12 @@ EXPERIMENT_CONFIG = {
     {'label': 'children_s_playground_p', 'target_rate': 0.20, 'pos_threshold': 0.50},
     {'label': 'water_feature_p',         'target_rate': 0.25, 'pos_threshold': 0.50},
 ],
-    # Training control — keep smoke/full-run and backbone fine-tuning decisions centralized.
+}
+
+
+# Frozen compatibility settings for the historical TensorFlow notebooks.
+# New PyTorch work must not read training controls from this mapping.
+LEGACY_TF_TRAINING_CONFIG = {
     'test_run_mode': False,
     'test_warmup_epochs': 1,
     'test_finetune_epochs': 1,
@@ -56,6 +63,13 @@ EXPERIMENT_CONFIG = {
     'fine_tune_backbone': True,
     'fine_tune_backbone_prefixes': ['block6d', 'block7a', 'top_'],
     'freeze_batch_norm_during_partial_finetune': True,
+}
+
+# Historical notebooks import EXPERIMENT_CONFIG as CFG. Keep that interface
+# working while making the active/shared task mapping explicit.
+EXPERIMENT_CONFIG = {
+    **MODEL_TASK_CONFIG,
+    **LEGACY_TF_TRAINING_CONFIG,
 }
 
 

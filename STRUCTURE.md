@@ -1,136 +1,127 @@
-# Repository Structure - GreenSpace CNN
+# Repository structure
 
-## 📁 Complete Directory Layout
+This document describes the July 2026 PyTorch-first repository. Generated
+data, checkpoints, reports, credentials, and local environments are ignored by
+Git even when they exist in a working copy.
 
-```
+```text
 GreenSpace_CNN/
-├── 📄 README.md                     # Project overview and setup
-├── 📄 LICENSE                       # License file
-├── 📄 requirements.txt              # Python dependencies (TensorFlow/Keras stack)
-├── 📄 STRUCTURE.md                  # This file - repository structure guide
-│
-├── 📁 data/                         # Data directory (see data/README.md)
-│   ├── 📄 README.md                 # Data structure documentation
-│   ├── 📁 raw/                      # Original, immutable data
-│   │   ├── 📁 images/               # Raw satellite/aerial images
-│   │   └── 📄 survey_responses.csv  # Raw survey responses
-│   ├── 📁 processed/                # Cleaned and processed data
-│   │   ├── 📁 images/               # Preprocessed images
-│   │   ├── 📄 labels.csv            # Processed labels for training
-│   │   └── 📁 splits/               # Train/val/test splits
-│   ├── 📁 external/                 # External datasets (optional)
-│   └── 📁 interim/                  # Intermediate processing files
-│
-├── 📁 notebooks/                    # Jupyter notebooks (main workflow)
-│   ├── 📓 01_data_exploration.ipynb      # Survey data analysis & visualization
-│   ├── 📓 02_data_preprocessing.ipynb    # Data cleaning & preparation
-│   ├── 📓 03_model_training.ipynb        # Multi-task CNN training
-│   ├── 📓 04_model_evaluation.ipynb      # Model evaluation & analysis
-│   └── 📓 05_prediction_demo.ipynb       # Interactive prediction demo
-│
-├── 📁 src/                          # Source code modules
-│   ├── 📄 utils.py                  # Utility functions (data processing, config)
-│   └── 📄 models.py                 # Multi-task CNN model definitions
-│
-├── 📁 config/                       # Configuration files
-│   └── 📄 model_config.yaml         # Model, training, and data configuration
-│
-├── 📁 models/                       # Trained model artifacts (created during training)
-│   └── 📄 best_model.h5             # Best trained model checkpoint
-│
-├── 📁 logs/                         # Training logs and outputs (created during training)
-│   ├── 📄 training_log.csv          # Training metrics log
-│   └── 📁 tensorboard/              # TensorBoard visualization files
-│
-└── 📁 outputs/                      # Results and predictions (created during inference)
-    ├── 📄 predictions.csv           # Model predictions on new data
-    └── 📁 visualizations/           # Generated plots and figures
+├── README.md
+├── STRUCTURE.md
+├── requirements.txt
+├── pyproject.toml
+├── data/
+│   ├── raw/                       # immutable survey inputs (local)
+│   ├── cache/images/              # downloaded rated images (local)
+│   ├── interim/                   # cleaned run-tagged surveys (generated)
+│   ├── processed/                 # labels, provenance summary, active splits
+│   ├── smoke_50/                  # small test dataset (local)
+│   └── core_pipeline_demo/        # notebook demonstration outputs (local)
+├── instruction_docs/
+│   └── google_drive_auth.md       # OAuth and Drive setup
+├── notebooks/
+│   ├── CORE_pipeline_v1.ipynb     # canonical 50-image handoff showcase
+│   ├── 03_pyTorch_training_v1.ipynb
+│   ├── 04_pyTorch_model_evaluation_v1.ipynb
+│   ├── 05_pyTorch_prediction_demo.ipynb
+│   └── ...                        # historical/analysis notebooks
+├── scripts/
+│   ├── download_drive_images.py   # explicit Google Drive download
+│   ├── preprocess.py              # survey → labels/splits/summary
+│   ├── train_torch.py             # new/resumed smoke or full training
+│   ├── evaluate_torch.py          # reports + validation thresholds
+│   ├── check_python_version.py
+│   ├── check_offline_checkpoint_load.py
+│   └── ...                        # historical diagnostics/report utilities
+├── src/
+│   ├── preprocessing.py           # reusable survey/split orchestration
+│   ├── drive_download.py          # reusable Drive download orchestration
+│   ├── drive_utils.py
+│   ├── label_schema.py            # shared task + legacy TF compatibility
+│   ├── augmentation.py
+│   └── ordinal_targets.py
+├── src_torch/
+│   ├── config.py                  # active PyTorch source of truth
+│   ├── data.py                    # manifests, datasets, loaders
+│   ├── transforms.py
+│   ├── sampling.py
+│   ├── models.py
+│   ├── losses.py
+│   ├── training.py                # resumable warm-up/fine-tune loop
+│   ├── evaluation.py              # metrics and threshold calibration
+│   ├── inference.py               # reusable inference functions
+│   ├── run_bundle.py              # portable checkpoint bundle loading
+│   └── artifacts.py
+├── tests/
+│   ├── test_preprocessing.py
+│   ├── test_drive_download.py
+│   ├── test_training_resume.py
+│   ├── test_evaluation_cli.py
+│   └── test_config_contract.py
+├── models/runs/                   # local checkpoints/config/history
+├── monitoring_output/runs/        # generated loss/threshold tables
+├── report_outputs/runs/           # generated evaluation reports
+├── secrets/                       # local OAuth files; never commit
+└── skills/                        # historical progress notes and side plans
 ```
 
-## 🚀 Getting Started Workflow
+## Active artifact contracts
 
-### 1. **Setup Environment**
-```bash
-pip install -r requirements.txt
+### Prepared dataset
+
+```text
+data/interim/survey_response_clean_<run-tag>.csv
+data/processed/labels_soft_<run-tag>.csv
+data/processed/labels_hard_<run-tag>.csv
+data/processed/preprocessing_summary_<run-tag>.json
+data/processed/splits/{train,val,test}.csv
 ```
 
-### 2. **Data Preparation**
-- Place your survey responses in `data/raw/survey_responses.csv`
-- Place images in `data/raw/images/`
-- Run `notebooks/01_data_exploration.ipynb` to understand your data
+The JSON summary is the dataset provenance record. It includes the survey and
+optional filelist hashes, explicit paths, seeds, row/image counts, split counts,
+and duplicate-row policy.
 
-### 3. **Data Processing**
-- Run `notebooks/02_data_preprocessing.ipynb` to:
-  - Clean and aggregate survey responses
-  - Process images and create data splits
-  - Set up TensorFlow data pipelines
+### PyTorch run
 
-### 4. **Model Training**
-- Configure model settings in `config/model_config.yaml`
-- Run `notebooks/03_model_training.ipynb` to:
-  - Build multi-task CNN architecture
-  - Train with proper callbacks and monitoring
-  - Save best model to `models/`
-
-### 5. **Evaluation**
-- Run `notebooks/04_model_evaluation.ipynb` to:
-  - Compute comprehensive metrics
-  - Analyze model performance per task
-  - Generate visualizations
-
-### 6. **Predictions**
-- Use `notebooks/05_prediction_demo.ipynb` for:
-  - Interactive predictions on new images
-  - Batch processing and CSV export
-
-## 🏗️ Architecture Highlights
-
-### **Multi-task Model Design**
-```python
-# Three prediction heads:
-├── Structured Rating (Regression): 0-1 scale
-├── Binary Features (Multi-binary): 6 greenspace features  
-└── Shade Level (Categorical): None/Some/Abundant
+```text
+models/runs/<run-tag>/
+├── last_<run-tag>.pt              # resumable optimizer/training state
+├── best_mcmae_<run-tag>.pt
+├── best_prauc_<run-tag>.pt
+├── final_<run-tag>.pt
+├── model_config_<run-tag>.json
+├── training_history_<run-tag>.json
+├── training_curves.png
+└── thresholds_<variant>.csv       # added by evaluation
 ```
 
-### **Technology Stack**
-- **Framework**: TensorFlow 2.15+ with Keras API
-- **Backbone**: EfficientNet/ResNet with ImageNet pretraining
-- **Data Pipeline**: tf.data for efficient loading
-- **Visualization**: matplotlib, seaborn, plotly
-- **Experiment Tracking**: TensorBoard + optional Weights & Biases
+### Evaluation
 
-### **Key Features**
-- ✅ **Notebook-driven workflow** for accessibility
-- ✅ **Multi-task learning** with shared CNN backbone
-- ✅ **Configurable architecture** via YAML files
-- ✅ **Comprehensive evaluation** with per-task metrics
-- ✅ **Interactive demos** for model exploration
-- ✅ **Geospatial support** for satellite imagery
+```text
+monitoring_output/runs/<run-tag>/
+├── loss_monitor_<variant>.csv
+└── thresholds_<variant>.csv       # historical monitoring copy
 
-## 📝 File Naming Conventions
+report_outputs/runs/<run-tag>/
+├── overall_metrics_by_split_<variant>.csv
+└── per_label_metrics_by_split_<variant>.csv
+```
 
-- **Notebooks**: Numbered prefix (01_, 02_, etc.) for workflow order
-- **Data files**: Descriptive names with underscores (survey_responses.csv)
-- **Images**: Keep original names or use consistent pattern
-- **Models**: Version suffix or timestamp for tracking
-- **Config**: Purpose-specific names (model_config.yaml)
+## Configuration ownership
 
-## 🔧 Customization Points
+- `src_torch/config.py` owns the active PyTorch model, loader, loss, training,
+  and stopping defaults.
+- `src/label_schema.py::MODEL_TASK_CONFIG` owns shared task choices such as
+  label exclusion, head modes, and oversampling targets.
+- `src/label_schema.py::LEGACY_TF_TRAINING_CONFIG` exists only for historical
+  TensorFlow notebook compatibility and is not read by active PyTorch code.
+- Per-run `model_config_<run-tag>.json` records the effective configuration and
+  split fingerprints actually used.
 
-1. **Model Architecture** (`config/model_config.yaml`):
-   - Change backbone CNN (EfficientNet, ResNet, etc.)
-   - Adjust task weights and loss functions
-   - Modify data augmentation settings
+## Current and deferred interfaces
 
-2. **Data Processing** (`src/utils.py`):
-   - Customize multi-rater aggregation methods
-   - Add new preprocessing steps
-   - Extend label encoding functions
-
-3. **Training Pipeline** (`notebooks/03_model_training.ipynb`):
-   - Experiment with different optimizers
-   - Add custom callbacks and metrics
-   - Implement advanced training strategies
-
-This structure balances **accessibility** (Jupyter notebooks) with **organization** (modular code) and **reproducibility** (configuration files).
+Drive download, preprocessing, training, and evaluation are packaged terminal
+interfaces. The canonical notebook demonstrates the same reusable functions on
+50 images. Standalone prediction and broad validation CLIs remain deferred;
+their reusable source modules are present, but their public interfaces are not
+yet declared complete.

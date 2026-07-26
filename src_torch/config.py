@@ -1,14 +1,18 @@
-"""Shared configuration for PyTorch smoke experiments.
+"""Canonical configuration for the active PyTorch pipeline.
 
-The first PyTorch step reuses the current NB02 split outputs and the same
-label/augmentation controls as the TensorFlow notebooks.
+Shared task controls come from ``MODEL_TASK_CONFIG``. All active PyTorch
+training schedule, optimization, and stopping controls live in this module.
 """
 
 import os
 from pathlib import Path
 
 from src.augmentation import AUG_PARAMS
-from src.label_schema import EXPERIMENT_CONFIG, HEAD_PRESETS, resolve_label_cols
+from src.label_schema import MODEL_TASK_CONFIG, HEAD_PRESETS, resolve_label_cols
+
+# Compatibility for the earliest PyTorch notebook. Active code imports the
+# clearer MODEL_TASK_CONFIG name below.
+EXPERIMENT_CONFIG = MODEL_TASK_CONFIG
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -115,7 +119,10 @@ TORCH_TRAINING_CONFIG = {
     "test_warmup_epochs": 1,
     "test_finetune_epochs": 1,
     "warmup_epochs": 5,
-    "finetune_epochs": 15,
+    # The July 2026 full run used a ceiling of 100 and stopped early after 24
+    # fine-tuning epochs. Early stopping, not a second schedule constant,
+    # determines the completed epoch.
+    "finetune_epochs": 100,
     "warmup_learning_rate": 1e-3,
     "finetune_learning_rate": 1e-4,
     "fine_tune_backbone": True,
@@ -140,6 +147,7 @@ __all__ = [
     "AUG_PARAMS",
     "EXPERIMENT_CONFIG",
     "HEAD_PRESETS",
+    "MODEL_TASK_CONFIG",
     "PROJECT_ROOT",
     "SPLIT_DIR",
     "TORCH_DATA_CONFIG",

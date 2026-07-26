@@ -143,6 +143,10 @@ def load_torch_checkpoint_model(model_path: str | Path, device: Any | None = Non
 def make_plain_eval_loader(
     split: str,
     batch_size: int = TORCH_DATA_CONFIG["batch_size"],
+    split_dir: str | Path | None = None,
+    image_root: str | Path | None = None,
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
 ):
     """Evaluation loader with no augmentation and no oversampling."""
 
@@ -150,8 +154,12 @@ def make_plain_eval_loader(
         split,
         batch_size=batch_size,
         shuffle=False,
+        split_dir=split_dir,
         image_transform="rgb_255",
         augment=False,
+        image_root=image_root,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
 
 
@@ -206,12 +214,23 @@ def predict_split(
     device: Any,
     batch_size: int = TORCH_DATA_CONFIG["batch_size"],
     max_batches: int | None = None,
+    split_dir: str | Path | None = None,
+    image_root: str | Path | None = None,
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
 ) -> tuple[pd.DataFrame, dict[str, np.ndarray], dict[str, float]]:
     """Predict one split and return split df, predictions, and loss-monitor metrics."""
 
     torch, functional = _require_torch()
-    df = load_split_df(split)
-    loader = make_plain_eval_loader(split, batch_size=batch_size)
+    df = load_split_df(split, split_dir=split_dir)
+    loader = make_plain_eval_loader(
+        split,
+        batch_size=batch_size,
+        split_dir=split_dir,
+        image_root=image_root,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
     rows = []
     pred_chunks = {"bin_head": [], "shade_head": [], "score_head": [], "veg_head": []}
     model.eval()
@@ -343,39 +362,63 @@ def tune_thresholds_f1(y_true_mat: np.ndarray, y_prob_mat: np.ndarray, label_nam
     return pd.DataFrame(rows)
 
 
-def tune_val_thresholds(
-    val_prediction: tuple[pd.DataFrame, dict[str, np.ndarray], dict[str, float]],
-    bin_names: list[str],
+def tune_validation_thresholds(
+    validation_prediction: tuple[
+        pd.DataFrame,
+        dict[str, np.ndarray],
+        dict[str, float],
+    ],
     binary_cols: list[str],
+    min_pos: int = 1,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
-    """Calibrate per-label binary thresholds on the validation split.
+    """Tune F1 thresholds from one validation prediction result.
 
-    Prefer hard-label columns when the split carries them; otherwise derive
-    targets from the soft ``_p`` columns at 0.5. Returns the full threshold
-    table plus the finite best-threshold lookup used to score the splits.
+    This wrapper keeps the binary-column alignment in one place so command-line
+    callers and notebooks use exactly the same validation-only calibration.
     """
 
-    val_df, val_preds, _ = val_prediction
-    hard_names = [name for name in bin_names if name in val_df.columns]
-    if hard_names:
-        y_true = val_df[hard_names].fillna(0).astype(int).values
-        y_prob = np.stack(
-            [val_preds["bin_head"][:, bin_names.index(name)] for name in hard_names],
-            axis=1,
-        )
-        label_names = hard_names
-    else:
-        y_true = (val_df[binary_cols].fillna(0.0).astype(np.float32).values >= 0.5).astype(int)
-        y_prob = val_preds["bin_head"]
-        label_names = bin_names
-
-    thresholds_df = tune_thresholds_f1(y_true, y_prob, label_names)
-    best_thresholds = {
-        row["label"]: float(row["best_threshold"])
+    val_df, val_preds, _ = validation_prediction
+    y_true, y_prob, label_names = _binary_truth_and_probs(
+        val_df,
+        val_preds,
+        binary_cols,
+    )
+    thresholds_df = tune_thresholds_f1(
+        y_true,
+        y_prob,
+        label_names,
+        min_pos=min_pos,
+    )
+    threshold_map = {
+        str(row["label"]): float(row["best_threshold"])
         for _, row in thresholds_df.iterrows()
         if np.isfinite(row["best_threshold"])
     }
-    return thresholds_df, best_thresholds
+    return thresholds_df, threshold_map
+
+
+def tune_val_thresholds(
+    val_prediction: tuple[
+        pd.DataFrame,
+        dict[str, np.ndarray],
+        dict[str, float],
+    ],
+    bin_names: list[str],
+    binary_cols: list[str],
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    """Backward-compatible name for validation threshold calibration.
+
+    ``bin_names`` is retained for callers from the first packaged evaluator.
+    Alignment is derived from ``binary_cols`` by the canonical wrapper.
+    """
+
+    expected_names = [column[:-2] for column in binary_cols]
+    if bin_names != expected_names:
+        raise ValueError(
+            "bin_names must match binary_cols order: "
+            f"expected {expected_names}, received {bin_names}"
+        )
+    return tune_validation_thresholds(val_prediction, binary_cols)
 
 
 def _pred_ordinal_class(pred_arr: np.ndarray) -> np.ndarray:
@@ -531,15 +574,31 @@ def save_evaluation_outputs(
     thresholds_df: pd.DataFrame,
     overall_df: pd.DataFrame,
     per_label_df: pd.DataFrame,
+    run_dir: str | Path | None = None,
+    monitoring_root: str | Path | None = None,
+    report_root: str | Path | None = None,
 ) -> dict[str, Path]:
     """Save reports plus the threshold artifact required by a model run bundle."""
 
-    monitoring_dir = PROJECT_ROOT / "monitoring_output" / "runs" / run_tag
-    report_dir = PROJECT_ROOT / "report_outputs" / "runs" / run_tag
-    run_dir = PROJECT_ROOT / "models" / "runs" / run_tag
-    if not run_dir.is_dir():
+    monitoring_dir = (
+        Path(monitoring_root)
+        if monitoring_root is not None
+        else PROJECT_ROOT / "monitoring_output" / "runs"
+    ) / run_tag
+    report_dir = (
+        Path(report_root)
+        if report_root is not None
+        else PROJECT_ROOT / "report_outputs" / "runs"
+    ) / run_tag
+    resolved_run_dir = (
+        Path(run_dir)
+        if run_dir is not None
+        else PROJECT_ROOT / "models" / "runs" / run_tag
+    )
+    if not resolved_run_dir.is_dir():
         raise FileNotFoundError(
-            f"Cannot save a PyTorch evaluation bundle: missing model run directory {run_dir}"
+            "Cannot save a PyTorch evaluation bundle: missing model run "
+            f"directory {resolved_run_dir}"
         )
     monitoring_dir.mkdir(parents=True, exist_ok=True)
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -549,7 +608,7 @@ def save_evaluation_outputs(
         # Keep the legacy monitoring copy for historical comparisons.
         "thresholds": monitoring_dir / f"thresholds_{variant}.csv",
         # The canonical portable-copy lives beside checkpoint and config.
-        "bundle_thresholds": run_dir / f"thresholds_{variant}.csv",
+        "bundle_thresholds": resolved_run_dir / f"thresholds_{variant}.csv",
         "overall": report_dir / f"overall_metrics_by_split_{variant}.csv",
         "per_label": report_dir / f"per_label_metrics_by_split_{variant}.csv",
     }

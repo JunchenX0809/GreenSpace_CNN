@@ -12,6 +12,8 @@ Google Drive authentication and image download remain separate concerns.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Sequence
@@ -505,6 +507,16 @@ def _validate_run_tag(run_tag: str) -> str:
     return value
 
 
+def _sha256_file(path: Path) -> str:
+    """Return a streaming SHA-256 digest for one preprocessing input."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def run_preprocessing_pipeline(
     survey_path: str | Path,
     image_dir: str | Path,
@@ -597,6 +609,7 @@ def run_preprocessing_pipeline(
     cleaned_path = interim_root / f"survey_response_clean_{tag}.csv"
     soft_path = processed_root / f"labels_soft_{tag}.csv"
     hard_path = processed_root / f"labels_hard_{tag}.csv"
+    summary_path = processed_root / f"preprocessing_summary_{tag}.json"
 
     # Compute and validate every artifact before creating output directories.
     interim_root.mkdir(parents=True, exist_ok=True)
@@ -614,12 +627,13 @@ def run_preprocessing_pipeline(
         "sample_size": sample_size,
         "sample_seed": int(sample_seed) if sample_size is not None else None,
     }
-    return {
+    result = {
         "run_tag": tag,
         "paths": {
             "cleaned_survey": cleaned_path,
             "labels_soft": soft_path,
             "labels_hard": hard_path,
+            "preprocessing_summary": summary_path,
             "train": split_paths["train"],
             "val": split_paths["val"],
             "test": split_paths["test"],
@@ -629,6 +643,49 @@ def run_preprocessing_pipeline(
         "selection_summary": selection_summary,
         "split_summary": split_summary,
     }
+    persisted_summary = {
+        "schema_version": 1,
+        "run_tag": tag,
+        "input": {
+            "survey_path": str(source.resolve()),
+            "survey_sha256": _sha256_file(source),
+            "image_dir": str(cache_root.resolve()),
+            "filelist_path": (
+                str(resolved_filelist_path.resolve())
+                if resolved_filelist_path is not None
+                else None
+            ),
+            "filelist_sha256": (
+                _sha256_file(resolved_filelist_path)
+                if resolved_filelist_path is not None
+                else None
+            ),
+        },
+        "parameters": {
+            "image_col": image_col,
+            "split_seed": int(split_seed),
+            "split_seed_2": int(split_seed_2),
+            "sample_size": sample_size,
+            "sample_seed": int(sample_seed) if sample_size is not None else None,
+            "require_all_images": bool(require_all_images),
+            "exact_duplicate_row_policy": "retain",
+        },
+        "inclusion_summary": inclusion_summary,
+        "selection_summary": selection_summary,
+        "split_summary": split_summary,
+        "output": {
+            name: str(path.resolve())
+            for name, path in result["paths"].items()
+            if path is not None and name != "preprocessing_summary"
+        },
+    }
+    temporary_summary_path = summary_path.with_suffix(".json.tmp")
+    temporary_summary_path.write_text(
+        json.dumps(persisted_summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary_summary_path.replace(summary_path)
+    return result
 
 
 __all__ = [
