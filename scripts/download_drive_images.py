@@ -110,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Validate inexpensive CLI controls before authentication.
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
     if args.max_retries < 1:
@@ -117,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.retry_delay_seconds < 0:
         parser.error("--retry-delay-seconds cannot be negative")
 
+    # Resolve Drive settings from explicit arguments or the project environment.
     load_drive_environment()
     folder_id = args.folder_id or os.getenv("GOOGLE_DRIVE_FOLDER_ID")
     if not folder_id:
@@ -138,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         if not path.is_file():
             parser.error(f"{label} CSV does not exist: {path}")
 
+    # Keep manifests and provenance tied to one run tag.
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
@@ -148,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         "summary": output_dir / f"drive_download_summary_{args.run_tag}.json",
     }
 
+    # Authenticate once and list the approved flat image folder.
     print("Authenticating to Google Drive...")
     drive = get_drive(
         use_local_server=not args.command_line_auth,
@@ -161,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         mime_prefix=mime_prefix,
         include_shared_drives=include_shared,
     )
+    # Join Drive IDs to the canonical file list and included survey images.
     drive_manifest, drive_summary = build_drive_manifest(
         files,
         duplicate_policy=args.duplicate_policy,
@@ -198,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Stopping because --fail-on-missing was supplied.")
             stop_for_missing = True
 
+    # Stop on missing IDs, build manifests only, or cache the missing images.
     download_summary: dict[str, object]
     if stop_for_missing:
         requested = int(
@@ -242,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         download_summary["manifest_only"] = False
         print("Download:", {k: v for k, v in download_summary.items() if k != "failures"})
 
+    # Persist inputs, counts, download outcomes, and artifact locations.
     summary = {
         "run_tag": args.run_tag,
         "inputs": {

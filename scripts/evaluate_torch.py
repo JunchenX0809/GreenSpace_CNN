@@ -112,10 +112,12 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Resolve explicit checkpoint and dataset locations.
     parser = build_parser()
     args = parser.parse_args(argv)
     checkpoint_path, split_dir, image_root = _validate_args(parser, args)
 
+    # Load the checkpoint and preserve its saved binary-label order.
     device = resolve_device(args.device)
     model, model_config, _ = load_torch_checkpoint_model(
         checkpoint_path,
@@ -124,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     run_tag, variant = infer_run_tag_and_variant(checkpoint_path)
     binary_cols = checkpoint_binary_cols(model_config)
 
+    # Confirm every split is compatible with the checkpoint schema.
     for split in ("train", "val", "test"):
         split_columns = set(load_split_df(split, split_dir=split_dir).columns)
         missing = [column for column in binary_cols if column not in split_columns]
@@ -132,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{split} split is incompatible with checkpoint binary labels: {missing}"
             )
 
+    # Run inference once on train, validation, and test.
     predictions_by_split = {
         split: predict_split(
             model,
@@ -145,16 +149,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         for split in ("train", "val", "test")
     }
+    # Tune binary thresholds on validation only.
     thresholds_df, threshold_map = tune_validation_thresholds(
         predictions_by_split["val"],
         binary_cols,
     )
+    # Apply validation thresholds when building all evaluation tables.
     loss_monitor_df = evaluate_loss_monitoring(predictions_by_split, binary_cols)
     overall_df, per_label_df = evaluate_all_splits(
         predictions_by_split,
         binary_cols,
         threshold_map,
     )
+    # Save portable thresholds, monitoring metrics, and reports.
     paths = save_evaluation_outputs(
         run_tag=run_tag,
         variant=variant,

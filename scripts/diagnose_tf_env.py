@@ -23,6 +23,7 @@ def _try_import_tf():
 
 
 def main() -> None:
+    # Report the interpreter and platform involved in the weight-load check.
     print("=== Python / Platform ===")
     print("python:", sys.version.replace("\n", " "))
     print("executable:", sys.executable)
@@ -30,6 +31,7 @@ def main() -> None:
     print("machine:", platform.machine())
     print("KERAS_HOME:", os.getenv("KERAS_HOME", "<unset>"))
 
+    # Stop early when TensorFlow itself is unavailable.
     tf, err = _try_import_tf()
     if tf is None:
         print("\n=== TensorFlow import FAILED ===")
@@ -45,6 +47,7 @@ def main() -> None:
     except Exception:
         pass
 
+    # Reproduce the smallest EfficientNet ImageNet-weight load used by the legacy pipeline.
     print("\n=== EfficientNetB0 ImageNet weights check ===")
     try:
         from tensorflow.keras import applications  # type: ignore
@@ -61,6 +64,7 @@ def main() -> None:
         print("FAILED: could not load weights='imagenet'")
         print(repr(e))
 
+        # Point failures to the conservative cache cleanup and environment checks.
         home = Path(os.getenv("KERAS_HOME") or (Path.home() / ".keras"))
         print("\nLikely causes:")
         print("- Wrong TensorFlow build for your machine (Apple Silicon vs x86_64)")
@@ -74,4 +78,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

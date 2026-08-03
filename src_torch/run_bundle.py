@@ -77,7 +77,8 @@ def load_run_bundle(
     # load_thresholds raises if any active label is missing or out of [0, 1].
     thresholds = load_thresholds(threshold_path, bin_names)
 
-    img_size = tuple(model_config.get("img_size", (512, 512)))
+    torch_data_config = model_config.get("torch_data_config", {})
+    img_size = tuple(torch_data_config.get("img_size", model_config.get("img_size", (512, 512))))
 
     return RunBundle(
         model=model,

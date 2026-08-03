@@ -18,6 +18,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+# Keep plotting/cache artifacts outside the repository.
 _CACHE_ROOT = Path("/private/tmp/greenspace_cnn_confusion_cache")
 _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(_CACHE_ROOT / "matplotlib"))
@@ -150,6 +151,7 @@ def _save_one_matrix(
 
 
 def _load_from_checkpoint(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, np.ndarray], str]:
+    # Labeled-split workflow: predict directly from a saved checkpoint.
     model_path = Path(args.model_path).expanduser() if args.model_path else find_latest_pytorch_checkpoint()
     run_tag, variant = infer_run_tag_and_variant(model_path)
     model, model_config, _ = load_torch_checkpoint_model(model_path)
@@ -161,6 +163,7 @@ def _load_from_checkpoint(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[
 
 
 def _load_from_prediction_csv(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, np.ndarray], str]:
+    # External-label workflow: align exported predictions with reviewed labels.
     prediction_path = Path(args.prediction_csv).expanduser()
     label_path = Path(args.label_csv).expanduser()
     pred_df = pd.read_csv(prediction_path)
@@ -203,6 +206,7 @@ def build_matrices(args: argparse.Namespace) -> pd.DataFrame:
     output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Select exactly one source workflow before calculating matrices.
     if args.prediction_csv or args.label_csv:
         if not args.prediction_csv or not args.label_csv:
             raise ValueError("--prediction-csv and --label-csv must be provided together.")
@@ -210,6 +214,7 @@ def build_matrices(args: argparse.Namespace) -> pd.DataFrame:
     else:
         df, preds, source_tag = _load_from_checkpoint(args)
 
+    # Round continuous score/vegetation outputs to diagnostic 1-5 classes.
     rows = []
     for head, true_col, pred_key in (
         ("score", "score_class", "score_head"),
@@ -228,6 +233,7 @@ def build_matrices(args: argparse.Namespace) -> pd.DataFrame:
             )
         )
 
+    # Save the optional CSV details and print one compact head summary.
     summary = pd.DataFrame(rows)
     summary_path = output_dir / f"confusion_summary_{source_tag}.csv"
     if args.save_csv:

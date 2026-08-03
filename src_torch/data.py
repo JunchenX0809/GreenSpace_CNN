@@ -295,19 +295,34 @@ def make_image_path_dataloader(
     image_paths: Sequence[str | Path],
     batch_size: int = TORCH_DATA_CONFIG["batch_size"],
     image_transform: str = "rgb_255",
+    img_size: tuple[int, int] = TORCH_DATA_CONFIG["img_size"],
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
 ):
     """Build an ordered, target-free DataLoader for image-only inference."""
 
     _require_torch()
     from torch.utils.data import DataLoader
 
-    dataset = ImagePathTorchDataset(image_paths, image_transform=image_transform)
+    dataset = ImagePathTorchDataset(
+        image_paths,
+        img_size=img_size,
+        image_transform=image_transform,
+    )
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=TORCH_DATA_CONFIG["num_workers"],
-        pin_memory=TORCH_DATA_CONFIG["pin_memory"],
+        num_workers=(
+            TORCH_DATA_CONFIG["num_workers"]
+            if num_workers is None
+            else int(num_workers)
+        ),
+        pin_memory=(
+            TORCH_DATA_CONFIG["pin_memory"]
+            if pin_memory is None
+            else bool(pin_memory)
+        ),
     )
 
 

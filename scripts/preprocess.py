@@ -54,7 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Resolve explicit survey, cache, provenance, and output locations.
     args = build_parser().parse_args(argv)
+    # Run the shared cleaning, inclusion, aggregation, and seeded split pipeline.
     result = run_preprocessing_pipeline(
         survey_path=args.survey_csv,
         image_dir=args.image_dir,
@@ -66,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         require_all_images=args.fail_on_missing_images,
     )
 
+    # Report the dataset counts and every generated artifact.
     print(f"Preprocessing complete: {result['run_tag']}")
     print("Inclusion:", result["inclusion_summary"])
     print("Selection:", result["selection_summary"])

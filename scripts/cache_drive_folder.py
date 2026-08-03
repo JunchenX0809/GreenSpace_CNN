@@ -52,9 +52,10 @@ def main():
     cache_dir = Path(args.cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    # Authenticate once before traversing the nested inference-image folders.
     drive = get_drive(use_local_server=False)
 
-    # Step 1: list subfolders
+    # Inventory parcel subfolders before downloading their images.
     print('Listing subfolders...')
     subfolders = list_subfolders(drive, args.folder_id)
     print(f'Found {len(subfolders)} subfolders')
@@ -63,7 +64,7 @@ def main():
         subfolders = subfolders[:args.limit]
         print(f'Limited to {len(subfolders)} subfolders')
 
-    # Step 2: iterate subfolders, list images, download
+    # Reuse valid cached files and retry only missing image downloads.
     skipped = 0
     downloaded = 0
     failed = 0

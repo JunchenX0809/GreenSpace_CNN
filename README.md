@@ -57,14 +57,16 @@ Generated reports and model files are ignored by Git.
 | Google Drive image download | `scripts/download_drive_images.py` | Ready |
 | Survey preprocessing and splitting | `scripts/preprocess.py` | Ready |
 | Resumable PyTorch training | `scripts/train_torch.py` | Ready |
+| Saved-history epoch visual | `scripts/plot_training_curves.py` | Ready |
 | Evaluation and validation threshold tuning | `scripts/evaluate_torch.py` | Ready |
+| Standalone prediction CLI | `scripts/predict_torch.py` | Ready |
+| Read-only pipeline validation CLI | `scripts/validate_pipeline.py` | Ready |
 | End-to-end 50-image showcase | `notebooks/CORE_pipeline_v1.ipynb` | Ready |
-| Standalone prediction CLI | `scripts/predict_torch.py` | Deferred |
-| Standalone pipeline validation CLI | `scripts/validate_pipeline.py` | Deferred |
 
-Inference packaging is intentionally deferred until the remaining utility
-interfaces are stable. Reusable inference modules already exist under
-`src_torch/`.
+Prediction loads one explicit portable run bundle: the selected checkpoint,
+its saved model configuration, and the matching validation-tuned threshold
+CSV. The validation command checks readiness without launching training,
+evaluation, or prediction.
 
 ## Install
 
@@ -195,7 +197,19 @@ python scripts/train_torch.py `
 ```
 
 Each run saves resumable state, best-MCMAE, best-PR-AUC, final inference
-checkpoint, effective configuration, history, curves, and split fingerprints.
+checkpoint, effective configuration, history, standard loss curves, the
+presentation-style PR-AUC/MAE epoch visual, and split fingerprints.
+
+Regenerate the presentation-style visual for an existing run:
+
+```powershell
+python scripts/plot_training_curves.py `
+  --run-dir models/runs/<run-tag>
+```
+
+By default, this writes `training_metric_curves.png` inside the run directory.
+Use `--output <path>` for an additional presentation copy. The script never
+writes to `presentation_visuals_only/` unless that location is requested.
 
 ## Evaluate
 
@@ -228,6 +242,65 @@ python scripts/evaluate_torch.py `
 
 The command never selects a different run implicitly.
 
+## Predict an unlabeled image folder
+
+Prediction accepts JPG, JPEG, and PNG files, sorts them deterministically by
+filename, and writes one row per image. It uses the label order saved with the
+checkpoint and the selected checkpoint variant's validation-tuned thresholds.
+
+Run a small smoke prediction first:
+
+```powershell
+python scripts/predict_torch.py `
+  --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt `
+  --image-dir D:\approved\unseen_images `
+  --dataset-tag july_review `
+  --limit 100 `
+  --device auto
+```
+
+Then omit `--limit` for the complete folder. The default output is:
+
+```text
+predictions/predictions_<run-tag>_<dataset-tag>[_sampleN].csv
+```
+
+Use `--output` for an exact CSV path or `--output-dir` for another output
+folder. Existing files are protected unless `--overwrite` is supplied
+explicitly. The stable output schema contains the image filename, probability
+and tuned hard prediction for each of seven binary labels, shade class and
+confidence, and the two bounded continuous predictions (`score_ev`, `veg_ev`).
+
+## Validate readiness
+
+Before allocating a long training/evaluation job, validate the environment,
+all three manifests, every labeled image, the checkpoint/config/threshold
+bundle, checkpoint-to-manifest label order, selected device, split isolation,
+and output location:
+
+```powershell
+python scripts/validate_pipeline.py `
+  --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt `
+  --split-dir data/processed/splits `
+  --image-root data/cache/images `
+  --device auto
+```
+
+For prediction-only handoff checks, omit labeled data and inspect an unlabeled
+folder:
+
+```powershell
+python scripts/validate_pipeline.py `
+  --checkpoint models/runs/<run-tag>/best_mcmae_<run-tag>.pt `
+  --skip-data `
+  --inference-dir D:\approved\unseen_images `
+  --output-dir D:\approved\prediction_outputs `
+  --device cpu
+```
+
+Validation is read-only: it reports all checks and exits nonzero when any item
+needs attention.
+
 ## Core 50-image showcase
 
 Open `notebooks/CORE_pipeline_v1.ipynb` for the clean handoff narrative:
@@ -246,6 +319,8 @@ python -m unittest discover -s tests -v
 python -m compileall -q src src_torch scripts
 python -m pip check
 python scripts/check_offline_checkpoint_load.py
+python scripts/predict_torch.py --help
+python scripts/validate_pipeline.py --help
 ```
 
 The offline check constructs a tiny synthetic bundle and does not need the

@@ -14,6 +14,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+# Keep plotting/cache artifacts outside the repository.
 _CACHE_ROOT = Path("/private/tmp/greenspace_cnn_confusion_cache")
 _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(_CACHE_ROOT / "matplotlib"))
@@ -42,6 +43,7 @@ def _label_name(binary_col: str) -> str:
 
 
 def _load_thresholds(path: Path, label_names: list[str], mode: str) -> dict[str, float]:
+    # Tuned mode reuses validation-calibrated thresholds; point5 is the fixed baseline.
     if mode == "point5":
         return {label: 0.5 for label in label_names}
     if not path.is_file():
@@ -190,6 +192,7 @@ def _default_threshold_path(model_path: Path, run_tag: str, variant: str) -> Pat
 
 
 def _load_from_checkpoint(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, np.ndarray], list[str], dict[str, float], str]:
+    # Labeled-split workflow: predict directly from a saved checkpoint.
     model_path = Path(args.model_path).expanduser() if args.model_path else find_latest_pytorch_checkpoint()
     run_tag, variant = infer_run_tag_and_variant(model_path)
     model, model_config, _ = load_torch_checkpoint_model(model_path)
@@ -205,6 +208,7 @@ def _load_from_checkpoint(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[
 
 
 def _load_from_prediction_csv(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, np.ndarray], list[str], dict[str, float], str]:
+    # External-label workflow: align exported predictions with reviewed labels.
     prediction_path = Path(args.prediction_csv).expanduser()
     label_path = Path(args.label_csv).expanduser()
     pred_df = pd.read_csv(prediction_path)
@@ -253,6 +257,7 @@ def build_matrices(args: argparse.Namespace) -> pd.DataFrame:
     output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Select exactly one source workflow before calculating matrices.
     if args.prediction_csv or args.label_csv:
         if not args.prediction_csv or not args.label_csv:
             raise ValueError("--prediction-csv and --label-csv must be provided together.")
@@ -260,6 +265,7 @@ def build_matrices(args: argparse.Namespace) -> pd.DataFrame:
     else:
         df, preds, binary_cols, thresholds, source_tag = _load_from_checkpoint(args)
 
+    # Build one 2x2 matrix per active binary label.
     rows = []
     probs = np.asarray(preds["bin_head"], dtype=np.float32)
     if probs.shape[1] != len(binary_cols):
@@ -292,6 +298,7 @@ def build_matrices(args: argparse.Namespace) -> pd.DataFrame:
             )
         )
 
+    # Save the optional CSV details and print one compact label summary.
     summary = pd.DataFrame(rows)
     summary_path = output_dir / f"binary_confusion_summary_{source_tag}.csv"
     if args.save_csv:

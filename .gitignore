@@ -33,6 +33,8 @@
 
 # Notebooks checkpoints
 **/.ipynb_checkpoints/**
+# Local archive for notebooks retired from the active workflow
+/notebooks_archive/
 /report_outputs/**
 /monitoring_output/**
 

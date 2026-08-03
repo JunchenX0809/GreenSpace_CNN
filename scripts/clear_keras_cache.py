@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 def main() -> None:
+    # Resolve the active Keras cache without touching project model artifacts.
     keras_home = Path(os.getenv("KERAS_HOME") or (Path.home() / ".keras"))
     models_dir = keras_home / "models"
 
@@ -23,6 +24,7 @@ def main() -> None:
         print("Nothing to do (models directory does not exist).")
         return
 
+    # Limit deletion candidates to cached EfficientNet application weights.
     patterns = [
         "*efficientnetb0*",
         "*efficientnetb1*",
@@ -39,7 +41,7 @@ def main() -> None:
     for pat in patterns:
         to_delete.extend(models_dir.glob(pat))
 
-    # De-dup + only files
+    # De-duplicate matches and exclude directories.
     uniq = []
     seen = set()
     for p in to_delete:
@@ -58,6 +60,7 @@ def main() -> None:
     for p in sorted(uniq):
         print(" -", p)
 
+    # Delete only the reviewed candidate list printed above.
     for p in uniq:
         try:
             p.unlink()
@@ -69,4 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

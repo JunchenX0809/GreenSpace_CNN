@@ -64,6 +64,9 @@ def predict_image_paths(
     image_paths: Sequence[str | Path],
     device: Any,
     batch_size: int,
+    img_size: tuple[int, int] = (512, 512),
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
 ) -> dict[str, np.ndarray]:
     """Predict ordered unlabeled images and return post-activation head arrays."""
 
@@ -73,10 +76,17 @@ def predict_image_paths(
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError("PyTorch is required for inference.") from exc
 
-    loader = make_image_path_dataloader(image_paths, batch_size=batch_size, image_transform="rgb_255")
+    loader = make_image_path_dataloader(
+        image_paths,
+        batch_size=batch_size,
+        image_transform="rgb_255",
+        img_size=img_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
     chunks = {"bin_head": [], "shade_head": [], "score_head": [], "veg_head": []}
     model.eval()
-    with torch.no_grad():
+    with torch.inference_mode():
         for images in loader:
             outputs = model(images.to(device))
             chunks["bin_head"].append(torch.sigmoid(outputs["bin_head"]).detach().cpu().numpy())
@@ -133,7 +143,63 @@ def build_prediction_dataframe(
     return frame
 
 
-def inference_output_tag(run_tag: str, limit: int | None) -> str:
+def expected_prediction_columns(binary_labels: Sequence[str]) -> list[str]:
+    """Return the stable image-only prediction CSV column order."""
+
+    columns = ["image_filename"]
+    for label in binary_labels:
+        columns.extend((f"{label}_prob", f"{label}_pred"))
+    columns.extend(("shade_class", "shade_confidence", "score_ev", "veg_ev"))
+    return columns
+
+
+def validate_prediction_dataframe(
+    frame: pd.DataFrame,
+    binary_labels: Sequence[str],
+    expected_rows: int | None = None,
+) -> None:
+    """Validate the public prediction CSV schema and numeric bounds."""
+
+    expected_columns = expected_prediction_columns(binary_labels)
+    if frame.columns.tolist() != expected_columns:
+        raise ValueError(
+            "Prediction columns do not match the stable schema. "
+            f"Expected {expected_columns}, found {frame.columns.tolist()}."
+        )
+    if expected_rows is not None and len(frame) != expected_rows:
+        raise ValueError(
+            f"Prediction row count {len(frame)} does not match requested images {expected_rows}."
+        )
+    if frame.empty:
+        raise ValueError("Prediction export cannot be empty.")
+    if not frame["image_filename"].is_unique:
+        raise ValueError("Prediction export contains duplicate image filenames.")
+
+    for label in binary_labels:
+        probability = pd.to_numeric(frame[f"{label}_prob"], errors="coerce")
+        prediction = pd.to_numeric(frame[f"{label}_pred"], errors="coerce")
+        if not probability.notna().all() or not probability.between(0.0, 1.0).all():
+            raise ValueError(f"Prediction probabilities are invalid for {label}.")
+        if not prediction.isin((0, 1)).all():
+            raise ValueError(f"Hard predictions are invalid for {label}.")
+
+    if not frame["shade_class"].isin(("minimal", "abundant")).all():
+        raise ValueError("Shade predictions must be 'minimal' or 'abundant'.")
+    shade_confidence = pd.to_numeric(frame["shade_confidence"], errors="coerce")
+    if not shade_confidence.notna().all() or not shade_confidence.between(0.0, 1.0).all():
+        raise ValueError("Shade confidence values must be finite and within [0, 1].")
+    for column in ("score_ev", "veg_ev"):
+        values = pd.to_numeric(frame[column], errors="coerce")
+        if not values.notna().all() or not values.between(1.0, 5.0).all():
+            raise ValueError(f"{column} values must be finite and within [1, 5].")
+
+
+def inference_output_tag(
+    run_tag: str,
+    limit: int | None,
+    dataset_tag: str | None = None,
+) -> str:
     """Keep limited smoke artifacts separate from full model-run artifacts."""
 
-    return run_tag if limit is None else f"{run_tag}_sample{limit}"
+    tag = run_tag if dataset_tag is None else f"{run_tag}_{dataset_tag}"
+    return tag if limit is None else f"{tag}_sample{limit}"

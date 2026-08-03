@@ -10,6 +10,7 @@ import sys
 
 
 def main() -> None:
+    # Reject unsupported interpreters before project dependencies are loaded.
     major, minor = sys.version_info[:2]
     if (major, minor) < (3, 11):
         raise SystemExit(
@@ -23,4 +24,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -292,8 +292,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Resolve the report root and select one new/baseline run pair.
     runs_dir = _resolve_runs_dir(args.runs_dir)
 
+    # Use explicit tags unless the caller requests the two newest folders.
     if args.auto_last_two:
         tags = _discover_run_tags(runs_dir)
         if len(tags) < 2:
@@ -329,6 +331,7 @@ def main() -> None:
                 return args.baseline_best_mcmae_tag or baseline_tag
         return new_tag if side == "new" else baseline_tag
 
+    # Compare each checkpoint variant only with the same variant.
     for variant in args.variants:
         nt = tag_for_variant("new", variant)
         bt = tag_for_variant("baseline", variant)
@@ -366,6 +369,7 @@ def main() -> None:
             )
             continue
 
+        # Load matching overall/per-label reports and reject incompatible schemas.
         df_on = _load_eval_csv(over_n)
         df_ob = _load_eval_csv(over_b)
         df_pn = _load_eval_csv(pl_n)
@@ -384,6 +388,7 @@ def main() -> None:
             )
             continue
 
+        # Convert matched metrics to long-format baseline/new comparisons.
         long_o, notes_o = _merge_long(
             df_on,
             df_ob,
@@ -410,6 +415,7 @@ def main() -> None:
 
         _label_set_diagnostic(df_pn, df_pb, variant)
 
+        # Save detailed comparison tables and print the test summary.
         out_over = out_dir / f"compare_to_{baseline_tag}_overall_{variant}.csv"
         out_pl = out_dir / f"compare_to_{baseline_tag}_per_label_{variant}.csv"
         long_o.to_csv(out_over, index=False)

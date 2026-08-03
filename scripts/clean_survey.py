@@ -27,14 +27,17 @@ def main() -> None:
     p.add_argument('--dedupe-columns', action='store_true', help='If set, append _2, _3, ... when normalization causes duplicate column names')
     args = p.parse_args()
 
+    # Resolve explicit input and output locations.
     in_path = Path(args.in_csv)
     out_path = Path(args.out_csv)
 
+    # Reuse the canonical survey-column and image-filename normalization.
     df = clean_survey_dataframe(
         pd.read_csv(in_path),
         image_col=args.image_col,
         dedupe_columns=args.dedupe_columns,
     )
+    # Save one cleaned CSV without changing the raw source file.
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False)
     print(f'Wrote {out_path} (rows={len(df)}, cols={len(df.columns)})')

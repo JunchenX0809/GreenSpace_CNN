@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Resolve new-run or resume inputs and reject conflicting controls.
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.resume and args.run_tag:
@@ -61,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.num_workers is not None and args.num_workers < 0:
         parser.error("--num-workers cannot be negative")
 
+    # Fail before model construction if required manifests or images are missing.
     data_root = Path(args.data_root)
     split_dir = Path(args.split_dir) if args.split_dir else data_root / "processed" / "splits"
     image_root = Path(args.image_root) if args.image_root else data_root / "cache" / "images"
@@ -73,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume and not Path(args.resume).is_file():
         parser.error(f"missing resume checkpoint: {args.resume}")
 
+    # Apply only the CLI overrides supplied for this smoke or full run.
     training_config: dict[str, object] = {
         "test_run_mode": args.mode == "smoke",
         "device": args.device,
@@ -92,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.pin_memory is not None:
         data_config["pin_memory"] = args.pin_memory
 
+    # Run the persistent warm-up/fine-tuning orchestration.
     try:
         result = run_persistent_warmup_finetune(
             run_tag=args.run_tag,
@@ -110,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 130
 
+    # Print the resumable, best-checkpoint, final, config, and history artifacts.
     print("Training artifacts:")
     for key in (
         "run_dir",

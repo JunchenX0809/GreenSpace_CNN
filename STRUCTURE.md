@@ -29,7 +29,10 @@ GreenSpace_CNN/
 │   ├── download_drive_images.py   # explicit Google Drive download
 │   ├── preprocess.py              # survey → labels/splits/summary
 │   ├── train_torch.py             # new/resumed smoke or full training
+│   ├── plot_training_curves.py    # saved history → PR-AUC/MAE visual
 │   ├── evaluate_torch.py          # reports + validation thresholds
+│   ├── predict_torch.py           # deterministic image-folder prediction
+│   ├── validate_pipeline.py       # read-only workflow readiness checks
 │   ├── check_python_version.py
 │   ├── check_offline_checkpoint_load.py
 │   └── ...                        # historical diagnostics/report utilities
@@ -56,7 +59,9 @@ GreenSpace_CNN/
 │   ├── test_preprocessing.py
 │   ├── test_drive_download.py
 │   ├── test_training_resume.py
+│   ├── test_training_artifacts.py
 │   ├── test_evaluation_cli.py
+│   ├── test_prediction_cli.py
 │   └── test_config_contract.py
 ├── models/runs/                   # local checkpoints/config/history
 ├── monitoring_output/runs/        # generated loss/threshold tables
@@ -92,6 +97,7 @@ models/runs/<run-tag>/
 ├── model_config_<run-tag>.json
 ├── training_history_<run-tag>.json
 ├── training_curves.png
+├── training_metric_curves.png     # presentation-style PR-AUC/MAE visual
 └── thresholds_<variant>.csv       # added by evaluation
 ```
 
@@ -107,6 +113,19 @@ report_outputs/runs/<run-tag>/
 └── per_label_metrics_by_split_<variant>.csv
 ```
 
+### Prediction
+
+```text
+predictions/
+└── predictions_<run-tag>_<dataset-tag>[_sampleN].csv
+```
+
+Prediction output never enters the run bundle and remains ignored by Git.
+Each CSV contains one unique `image_filename`, two columns per active binary
+label (`*_prob`, `*_pred`), shade class/confidence, `score_ev`, and `veg_ev`.
+The command validates schema, bounds, finite values, row count, and filename
+uniqueness before publishing the CSV atomically.
+
 ## Configuration ownership
 
 - `src_torch/config.py` owns the active PyTorch model, loader, loss, training,
@@ -118,10 +137,9 @@ report_outputs/runs/<run-tag>/
 - Per-run `model_config_<run-tag>.json` records the effective configuration and
   split fingerprints actually used.
 
-## Current and deferred interfaces
+## Packaged interfaces
 
-Drive download, preprocessing, training, and evaluation are packaged terminal
-interfaces. The canonical notebook demonstrates the same reusable functions on
-50 images. Standalone prediction and broad validation CLIs remain deferred;
-their reusable source modules are present, but their public interfaces are not
-yet declared complete.
+Drive download, preprocessing, training, saved-history visualization,
+evaluation, image-folder prediction, and read-only pipeline validation are
+packaged terminal interfaces. The canonical notebook demonstrates the same
+reusable preprocessing, training, and evaluation functions on 50 images.

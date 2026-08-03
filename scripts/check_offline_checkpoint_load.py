@@ -44,15 +44,15 @@ def main() -> int:
     variant = "best_mcmae"
     device = torch.device("cpu")
 
+    # Create a disposable run bundle and synthetic image cache.
     work = Path(tempfile.mkdtemp(prefix="offline_bundle_"))
     run_dir = work / "models" / "runs" / run_tag
     run_dir.mkdir(parents=True)
     images_dir = work / "images"
     images_dir.mkdir()
 
-    # Tiny ResNet-50 built WITHOUT pretrained weights, so construction needs no
-    # network. ResNet-50 keeps the check fast; the load path is architecture
-    # agnostic.
+    # Build a tiny model without pretrained weights or network access.
+    # ResNet-50 keeps the check fast; the load path is architecture agnostic.
     model = build_torchgeo_model(
         model_name="resnet50",
         weight_name="ResNet50_Weights.FMOW_RGB_GASSL",
@@ -60,6 +60,7 @@ def main() -> int:
         num_binary=len(binary_cols),
     )
 
+    # Save the minimum checkpoint metadata required by the portable loader.
     model_config = {
         "run_tag": run_tag,
         "img_size": [512, 512],
@@ -87,20 +88,20 @@ def main() -> int:
         model_config=model_config,
     )
 
-    # Matching thresholds, keyed by the stripped label names.
+    # Add matching thresholds keyed by stripped label names.
     thr_csv = run_dir / f"thresholds_{variant}.csv"
     with open(thr_csv, "w") as handle:
         handle.write("label,best_threshold\n")
         for name in (col[:-2] for col in binary_cols):
             handle.write(f"{name},0.5\n")
 
-    # Two synthetic RGB inputs.
+    # Generate two deterministic synthetic RGB inputs.
     rng = np.random.default_rng(0)
     for idx in range(2):
         arr = rng.integers(0, 256, size=(512, 512, 3), dtype=np.uint8)
         Image.fromarray(arr).save(images_dir / f"img_{idx}.jpg")
 
-    # Reload as a validated bundle and predict — all offline.
+    # Reload the bundle and verify finite predictions entirely offline.
     bundle = load_run_bundle(ckpt_path, device=device)
     assert bundle.bin_names == [col[:-2] for col in binary_cols], "bin_names mismatch"
     assert set(bundle.thresholds) == set(bundle.bin_names), "threshold labels mismatch"
