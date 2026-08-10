@@ -54,12 +54,57 @@ The packaged best-MCMAE bundle passed CPU validation and inference on all 50
 review images. It generated `predictions_review_test_v1.csv` with 50 rows, 19
 columns, no duplicate filenames, and no missing values.
 
-## Remaining Review Handoff
+## Fresh-Clone Reviewer Walkthrough
 
-| Item | Status |
-| --- | --- |
-| Reconcile and commit the local packaged workflow | Pending |
-| Push the reviewed commit for fresh cloning | Pending |
-| Zip checkpoint, matching configuration, and thresholds | Pending |
-| Repeat inference from a clean clone | Pending |
-| Provide labeled splits/images for evaluation | Optional; not needed for inference |
+GitHub `main` now includes the packaged validation and inference workflow at
+commit `19b0651`. From the cloned repository root:
+
+1. Create Python 3.11 environment and install dependencies.
+
+   ```bash
+   python3.11 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements.txt
+   ```
+
+   On Windows, use `py -3.11 -m venv .venv` and
+   `.venv\Scripts\Activate.ps1` instead.
+
+2. Extract the downloaded files into this layout:
+
+   ```text
+   models/runs/PyTorch_20260719_full_windows/
+     best_mcmae_PyTorch_20260719_full_windows.pt
+     model_config_PyTorch_20260719_full_windows.json
+     thresholds_best_mcmae.csv
+
+   data/cache/test_inference_images/
+     <50 JPG images>
+   ```
+
+3. Validate the environment, model bundle, and images.
+
+   ```bash
+   python scripts/validate_pipeline.py \
+     --run-dir models/runs/PyTorch_20260719_full_windows \
+     --skip-data \
+     --inference-dir data/cache/test_inference_images \
+     --device cpu
+   ```
+
+4. Generate predictions.
+
+   ```bash
+   python scripts/predict_torch.py \
+     --run-dir models/runs/PyTorch_20260719_full_windows \
+     --image-dir data/cache/test_inference_images \
+     --dataset-tag review_test_v1 \
+     --device cpu
+   ```
+
+5. Open
+   `predictions/predictions_PyTorch_20260719_full_windows_review_test_v1.csv`.
+
+The evaluation script is not required for these unlabeled review images. It
+requires the labeled train/validation/test manifests and their rated images.

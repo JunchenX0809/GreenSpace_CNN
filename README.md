@@ -94,6 +94,72 @@ python scripts/check_python_version.py
 
 TensorFlow is not required for the active PyTorch workflow.
 
+## Prediction-only clean-clone trial: 50 images
+
+This reviewer path does not require Google Drive authentication, survey data,
+split manifests, preprocessing, training, or evaluation. The current
+`requirements.txt` installs the full project environment; a smaller
+inference-only dependency file is not yet provided.
+
+Download the July 19 BestMCMAE model bundle and 50-image inference sample from
+the [GreenSpace_CNN external-review files](https://drive.google.com/drive/folders/1tlsfN30WkAFBkwEmtTJmGt-uA6KbKXZA).
+The Drive folder also contains raw survey samples, but they are not needed for
+this prediction trial.
+
+Extract the model bundle without renaming its directory or internal files:
+
+```text
+models/runs/PyTorch_20260719_full_windows/
+├── best_mcmae_PyTorch_20260719_full_windows.pt
+├── model_config_PyTorch_20260719_full_windows.json
+└── thresholds_best_mcmae.csv
+```
+
+See [`models/README.md`](models/README.md) for the external-artifact contract
+and reference checksums. Extract the image sample to:
+
+```text
+data/cache/inference_images/review50/
+```
+
+That directory must contain exactly 50 top-level JPG, JPEG, or PNG files;
+subdirectories are not scanned. The model and image input directories must
+exist before running the commands below. The prediction output directory is
+created automatically.
+
+First validate the real bundle and all 50 input filenames without requiring
+labeled data:
+
+```console
+python scripts/validate_pipeline.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --skip-data --inference-dir data/cache/inference_images/review50 --output-dir predictions/review_trial --device cpu
+```
+
+Every validation check should report `PASS`, including `Inference images: 50`.
+Validation checks supported filenames but does not fully decode every image, so
+run a five-image inference smoke test next:
+
+```console
+python scripts/predict_torch.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --image-dir data/cache/inference_images/review50 --dataset-tag review50 --limit 5 --output-dir predictions/review_trial --device cpu
+```
+
+Then predict all 50 images by omitting `--limit`:
+
+```console
+python scripts/predict_torch.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --image-dir data/cache/inference_images/review50 --dataset-tag review50 --output-dir predictions/review_trial --device cpu
+```
+
+The two outputs are:
+
+```text
+predictions/review_trial/predictions_PyTorch_20260719_full_windows_review50_sample5.csv
+predictions/review_trial/predictions_PyTorch_20260719_full_windows_review50.csv
+```
+
+The full command should report `Images: 50`. Its CSV contains 50 unique image
+rows and 19 columns for the current seven-binary-label model. Existing output
+files are protected; use a new dataset tag or pass `--overwrite` explicitly
+when a replacement is intended.
+
 ## Data contract
 
 Local data is intentionally not versioned:
@@ -328,8 +394,8 @@ full checkpoint. Production checkpoints are too large for this Git repository.
 
 ## Git and artifact boundaries
 
-Git tracks source, scripts, notebooks, tests, documentation, and empty
-directory contracts. It must not track:
+Git tracks source, scripts, notebooks, tests, documentation, and selected
+directory-contract README files. It must not track:
 
 - raw/processed data or cached imagery;
 - `.env` files or OAuth credentials;
