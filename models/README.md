@@ -4,10 +4,11 @@ Model checkpoints and run outputs are intentionally excluded from Git because
 they are large generated artifacts. A clean clone therefore does not contain a
 `models/runs/` payload.
 
-For the prediction-only external-review trial, download the July 19 BestMCMAE
-bundle from the
+For the external-review trial, download
+`PyTorch_20260719_full_windows.zip` from the
 [GreenSpace_CNN external-review files](https://drive.google.com/drive/folders/1tlsfN30WkAFBkwEmtTJmGt-uA6KbKXZA)
-and extract it without renaming the run directory or its files:
+and extract it under `models/runs/` without renaming the run directory or its
+files:
 
 ```text
 models/

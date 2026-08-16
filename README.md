@@ -68,6 +68,21 @@ its saved model configuration, and the matching validation-tuned threshold
 CSV. The validation command checks readiness without launching training,
 evaluation, or prediction.
 
+### Reviewer path
+
+```mermaid
+flowchart TB
+    A["50 labeled images + 67 survey rows"] --> B["Preprocess → 30/10/10 splits"]
+    B --> C["Augment + train Swin V2 B<br/>Satlas weights · 1 warm-up + 1 fine-tune"]
+    C --> D["Evaluate → demo checkpoints + thresholds"]
+    D -. "then" .-> E["July production bundle + 50 unseen images"]
+    E --> F["Validate + predict"]
+    F --> G["50-row predictions CSV"]
+```
+
+The training demo uses the production model and data path with a shortened
+1+1 schedule; its metrics are pipeline evidence, not performance evidence.
+
 ## Install
 
 Python 3.11 is the tested environment.
@@ -94,17 +109,74 @@ python scripts/check_python_version.py
 
 TensorFlow is not required for the active PyTorch workflow.
 
-## Prediction-only clean-clone trial: 50 images
+## External-review clean-clone setup
+
+Download these three archives from the
+[GreenSpace_CNN external-review files](https://drive.google.com/drive/folders/1tlsfN30WkAFBkwEmtTJmGt-uA6KbKXZA):
+
+| Archive | Purpose |
+|---|---|
+| `GreenSpace_CNN_training_demo_50_v1.zip` | 67 raw survey rows (66 included ratings) and their 50 labeled images |
+| `PyTorch_20260719_full_windows.zip` | July production checkpoint, model configuration, and thresholds |
+| `GreenSpace_CNN_unseen_inference_50_v1.zip` | Separate 50-image unlabeled prediction set |
+
+Data and model payloads are intentionally excluded from Git. A clean clone may
+therefore lack `data/core_pipeline_demo/raw/` and `models/runs/`; creating these
+two input parents and extracting the three archives are manual steps. On
+macOS/Linux:
+
+```bash
+mkdir -p data/core_pipeline_demo/raw models/runs
+```
+
+On PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force -Path data/core_pipeline_demo/raw, models/runs
+```
+
+Extract both 50-image archives into `data/core_pipeline_demo/raw/`. Extract the
+production model archive into `models/runs/`. Before opening the notebook, the
+relevant payload must have this exact layout:
+
+```text
+data/core_pipeline_demo/raw/
+├── training_demo_50/
+│   ├── demo50_survey_response.csv
+│   └── images/                       # exactly 50 labeled images
+└── review50_unseen/                  # exactly 50 unlabeled images
+
+models/runs/PyTorch_20260719_full_windows/
+├── best_mcmae_PyTorch_20260719_full_windows.pt
+├── model_config_PyTorch_20260719_full_windows.json
+└── thresholds_best_mcmae.csv
+```
+
+Do not rename the model run directory or its three files. The reviewer does not
+manually create derived folders: preprocessing creates the demo interim and
+processed trees, training creates a new model run, evaluation creates monitoring
+and report folders, and prediction creates `predictions/review_trial/`.
+
+After installation and extraction, open
+[`notebooks/CORE_pipeline_v1.ipynb`](notebooks/CORE_pipeline_v1.ipynb) and run
+the cells in order. It performs the 67-row/50-image package preflight,
+preprocessing and 30/10/10 split, actual augmented and oversampled input-loader
+inspection, production-equivalent Swin V2 B + Satlas 1+1 training, demo
+evaluation and threshold tuning, production-bundle validation, and separate
+unseen-image prediction. The first training run needs network access if the
+TorchGeo Satlas weight is not already cached; an accelerator is strongly
+recommended.
+
+## Prediction-only CLI trial: 50 unseen images
 
 This reviewer path does not require Google Drive authentication, survey data,
 split manifests, preprocessing, training, or evaluation. The current
 `requirements.txt` installs the full project environment; a smaller
 inference-only dependency file is not yet provided.
 
-Download the July 19 BestMCMAE model bundle and 50-image inference sample from
-the [GreenSpace_CNN external-review files](https://drive.google.com/drive/folders/1tlsfN30WkAFBkwEmtTJmGt-uA6KbKXZA).
-The Drive folder also contains raw survey samples, but they are not needed for
-this prediction trial.
+Only `PyTorch_20260719_full_windows.zip` and
+`GreenSpace_CNN_unseen_inference_50_v1.zip` are needed when the reviewer wants
+to skip the notebook's preprocessing and training demonstration.
 
 Extract the model bundle without renaming its directory or internal files:
 
@@ -116,10 +188,10 @@ models/runs/PyTorch_20260719_full_windows/
 ```
 
 See [`models/README.md`](models/README.md) for the external-artifact contract
-and reference checksums. Extract the image sample to:
+and reference checksums. The extracted image sample is:
 
 ```text
-data/cache/inference_images/review50/
+data/core_pipeline_demo/raw/review50_unseen/
 ```
 
 That directory must contain exactly 50 top-level JPG, JPEG, or PNG files;
@@ -131,7 +203,7 @@ First validate the real bundle and all 50 input filenames without requiring
 labeled data:
 
 ```console
-python scripts/validate_pipeline.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --skip-data --inference-dir data/cache/inference_images/review50 --output-dir predictions/review_trial --device cpu
+python scripts/validate_pipeline.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --skip-data --inference-dir data/core_pipeline_demo/raw/review50_unseen --output-dir predictions/review_trial --device cpu
 ```
 
 Every validation check should report `PASS`, including `Inference images: 50`.
@@ -139,20 +211,20 @@ Validation checks supported filenames but does not fully decode every image, so
 run a five-image inference smoke test next:
 
 ```console
-python scripts/predict_torch.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --image-dir data/cache/inference_images/review50 --dataset-tag review50 --limit 5 --output-dir predictions/review_trial --device cpu
+python scripts/predict_torch.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --image-dir data/core_pipeline_demo/raw/review50_unseen --dataset-tag review50_unseen --limit 5 --output-dir predictions/review_trial --device cpu
 ```
 
 Then predict all 50 images by omitting `--limit`:
 
 ```console
-python scripts/predict_torch.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --image-dir data/cache/inference_images/review50 --dataset-tag review50 --output-dir predictions/review_trial --device cpu
+python scripts/predict_torch.py --checkpoint models/runs/PyTorch_20260719_full_windows/best_mcmae_PyTorch_20260719_full_windows.pt --image-dir data/core_pipeline_demo/raw/review50_unseen --dataset-tag review50_unseen --output-dir predictions/review_trial --device cpu
 ```
 
 The two outputs are:
 
 ```text
-predictions/review_trial/predictions_PyTorch_20260719_full_windows_review50_sample5.csv
-predictions/review_trial/predictions_PyTorch_20260719_full_windows_review50.csv
+predictions/review_trial/predictions_PyTorch_20260719_full_windows_review50_unseen_sample5.csv
+predictions/review_trial/predictions_PyTorch_20260719_full_windows_review50_unseen.csv
 ```
 
 The full command should report `Images: 50`. Its CSV contains 50 unique image
@@ -209,7 +281,7 @@ Example for the approved survey:
 
 ```powershell
 python scripts/preprocess.py `
-  --survey-csv data/raw/0718_survey_response.csv.csv `
+  --survey-csv data/raw/0708_survey_response.csv `
   --filelist-csv data/interim/filelist_with_drive_ids.csv `
   --image-dir data/cache/images `
   --run-tag 0719_windows_full `
@@ -235,8 +307,8 @@ Smoke run:
 ```powershell
 python scripts/train_torch.py `
   --mode smoke `
-  --split-dir data/smoke_50/processed/splits `
-  --image-root data/cache/images `
+  --split-dir data/core_pipeline_demo/processed/splits `
+  --image-root data/core_pipeline_demo/raw/training_demo_50/images `
   --device auto
 ```
 
@@ -369,14 +441,18 @@ needs attention.
 
 ## Core 50-image showcase
 
-Open `notebooks/CORE_pipeline_v1.ipynb` for the clean handoff narrative:
-OAuth prerequisites, Drive download interface, preprocessing, deterministic
-50-image selection, 30/10/10 split, model construction, 1+1 smoke training,
-evaluation, and threshold calibration.
+[`notebooks/CORE_pipeline_v1.ipynb`](notebooks/CORE_pipeline_v1.ipynb) is the
+canonical reviewer interface. Its cells use the downloaded handoff packages
+and current shared orchestrations directly; they do not copy historical
+notebook implementations. Run the notebook in order after completing the
+manual extraction layout above.
 
-Expensive or authenticated actions are guarded by `RUN_*` toggles. The
-50-image, two-epoch result is wiring evidence only and must not be interpreted
-as model-performance evidence.
+The notebook deliberately uses the active Swin V2 B model with
+`Swin_V2_B_Weights.NAIP_RGB_SI_SATLAS`, 512×512 input, augmentation,
+oversampling, one warm-up epoch, and one fine-tuning epoch. The shortened run
+tests end-to-end wiring only and must not be interpreted as performance
+evidence. Because the architecture is unchanged, its generated checkpoints are
+not small even though the dataset and schedule are small.
 
 ## Verification
 
