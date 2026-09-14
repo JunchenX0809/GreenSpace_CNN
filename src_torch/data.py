@@ -189,6 +189,71 @@ class ImagePathTorchDataset:
         return _load_rgb_tensor(str(self.image_paths[idx]), self.image_transform)
 
 
+class ResilientImagePathTorchDataset:
+    """Image-only dataset that reports file read/decode failures per item."""
+
+    def __init__(
+        self,
+        image_paths: Sequence[str | Path],
+        img_size: tuple[int, int] = TORCH_DATA_CONFIG["img_size"],
+        image_transform: str = "rgb_255",
+    ) -> None:
+        self.image_paths = [Path(path) for path in image_paths]
+        if not self.image_paths:
+            raise ValueError("Inference requires at least one image path.")
+        self.image_transform = build_image_transform(
+            img_size=img_size,
+            mode=image_transform,
+            augment=False,
+        )
+
+    def __len__(self) -> int:
+        return len(self.image_paths)
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        path = self.image_paths[idx]
+        try:
+            image = _load_rgb_tensor(str(path), self.image_transform)
+        except (OSError, ValueError) as exc:
+            return {
+                "path": str(path),
+                "image": None,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            }
+        return {
+            "path": str(path),
+            "image": image,
+            "error_type": None,
+            "error_message": None,
+        }
+
+
+def _collate_resilient_image_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Stack readable images while keeping unreadable-image details."""
+
+    torch = _require_torch()
+    readable = [item for item in items if item["image"] is not None]
+    failures = [item for item in items if item["image"] is None]
+    images = (
+        torch.stack([item["image"] for item in readable])
+        if readable
+        else None
+    )
+    return {
+        "paths": [item["path"] for item in readable],
+        "images": images,
+        "failures": [
+            {
+                "path": item["path"],
+                "error_type": item["error_type"],
+                "error_message": item["error_message"],
+            }
+            for item in failures
+        ],
+    }
+
+
 class GreenSpaceTorchDataset:
     """Minimal Dataset-compatible object for one split manifest."""
 
@@ -323,6 +388,42 @@ def make_image_path_dataloader(
             if pin_memory is None
             else bool(pin_memory)
         ),
+    )
+
+
+def make_resilient_image_path_dataloader(
+    image_paths: Sequence[str | Path],
+    batch_size: int = TORCH_DATA_CONFIG["batch_size"],
+    image_transform: str = "rgb_255",
+    img_size: tuple[int, int] = TORCH_DATA_CONFIG["img_size"],
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
+):
+    """Build an ordered inference loader that isolates unreadable images."""
+
+    _require_torch()
+    from torch.utils.data import DataLoader
+
+    dataset = ResilientImagePathTorchDataset(
+        image_paths,
+        img_size=img_size,
+        image_transform=image_transform,
+    )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=(
+            TORCH_DATA_CONFIG["num_workers"]
+            if num_workers is None
+            else int(num_workers)
+        ),
+        pin_memory=(
+            TORCH_DATA_CONFIG["pin_memory"]
+            if pin_memory is None
+            else bool(pin_memory)
+        ),
+        collate_fn=_collate_resilient_image_batch,
     )
 
 

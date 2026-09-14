@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
 
-from src_torch.data import make_image_path_dataloader
+from src_torch.data import (
+    make_image_path_dataloader,
+    make_resilient_image_path_dataloader,
+)
 
 SUPPORTED_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
+
+
+@dataclass(frozen=True)
+class ImageInferenceFailure:
+    """One image that could not be read or decoded for inference."""
+
+    path: Path
+    error_type: str
+    error_message: str
 
 
 def list_inference_image_paths(cache_dir: str | Path, limit: int | None = None) -> list[Path]:
@@ -103,20 +116,100 @@ def predict_image_paths(
     return predictions
 
 
-def build_prediction_dataframe(
+def predict_image_paths_resilient(
+    model: Any,
     image_paths: Sequence[str | Path],
+    device: Any,
+    batch_size: int,
+    img_size: tuple[int, int] = (512, 512),
+    num_workers: int | None = None,
+    pin_memory: bool | None = None,
+) -> tuple[
+    list[Path],
+    dict[str, np.ndarray] | None,
+    list[ImageInferenceFailure],
+]:
+    """Predict readable images and report only file read/decode failures."""
+
+    try:
+        import torch
+        import torch.nn.functional as functional
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError("PyTorch is required for inference.") from exc
+
+    paths = [Path(path) for path in image_paths]
+    loader = make_resilient_image_path_dataloader(
+        paths,
+        batch_size=batch_size,
+        image_transform="rgb_255",
+        img_size=img_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+    chunks = {"bin_head": [], "shade_head": [], "score_head": [], "veg_head": []}
+    successful_paths: list[Path] = []
+    failures: list[ImageInferenceFailure] = []
+
+    model.eval()
+    with torch.inference_mode():
+        for batch in loader:
+            failures.extend(
+                ImageInferenceFailure(
+                    path=Path(item["path"]),
+                    error_type=str(item["error_type"]),
+                    error_message=str(item["error_message"]),
+                )
+                for item in batch["failures"]
+            )
+            images = batch["images"]
+            if images is None:
+                continue
+            outputs = model(images.to(device))
+            chunks["bin_head"].append(
+                torch.sigmoid(outputs["bin_head"]).detach().cpu().numpy()
+            )
+            chunks["shade_head"].append(
+                functional.softmax(outputs["shade_head"], dim=1)
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            chunks["score_head"].append(
+                outputs["score_head"].detach().cpu().numpy()
+            )
+            chunks["veg_head"].append(
+                outputs["veg_head"].detach().cpu().numpy()
+            )
+            successful_paths.extend(Path(path) for path in batch["paths"])
+
+    if not successful_paths:
+        return successful_paths, None, failures
+
+    predictions = {
+        name: np.concatenate(values, axis=0) for name, values in chunks.items()
+    }
+    count = len(successful_paths)
+    if any(values.shape[0] != count for values in predictions.values()):
+        raise RuntimeError("Prediction row count does not match readable image paths.")
+    if any(not np.isfinite(values).all() for values in predictions.values()):
+        raise RuntimeError("Inference produced non-finite prediction values.")
+    if count + len(failures) != len(paths):
+        raise RuntimeError("Inference success/failure counts do not match requested images.")
+    return successful_paths, predictions, failures
+
+
+def build_prediction_values_dataframe(
     predictions: dict[str, np.ndarray],
     binary_labels: Sequence[str],
     thresholds: dict[str, float],
 ) -> pd.DataFrame:
-    """Convert model predictions into the TensorFlow NB05-compatible CSV schema."""
+    """Convert raw model predictions into public prediction-value columns."""
 
-    paths = [Path(path) for path in image_paths]
-    count = len(paths)
     binary = np.asarray(predictions["bin_head"], dtype=np.float32)
     shade = np.asarray(predictions["shade_head"], dtype=np.float32)
     score = np.asarray(predictions["score_head"], dtype=np.float32).reshape(-1)
     veg = np.asarray(predictions["veg_head"], dtype=np.float32).reshape(-1)
+    count = int(binary.shape[0]) if binary.ndim >= 1 else 0
 
     if binary.shape != (count, len(binary_labels)):
         raise ValueError(f"Unexpected binary prediction shape: {binary.shape}")
@@ -128,29 +221,98 @@ def build_prediction_dataframe(
     if missing:
         raise ValueError(f"Missing thresholds for active labels: {missing}")
 
-    rows: dict[str, Any] = {"image_filename": [path.name for path in paths]}
+    rows: dict[str, Any] = {}
     for idx, label in enumerate(binary_labels):
         rows[f"{label}_prob"] = binary[:, idx]
         rows[f"{label}_pred"] = (binary[:, idx] >= thresholds[label]).astype(int)
-    rows["shade_class"] = np.where(shade.argmax(axis=1) == 0, "minimal", "abundant")
+    rows["shade_class"] = np.where(
+        shade.argmax(axis=1) == 0,
+        "minimal",
+        "abundant",
+    )
     rows["shade_confidence"] = shade.max(axis=1)
     rows["score_ev"] = np.clip(score, 1.0, 5.0)
     rows["veg_ev"] = np.clip(veg, 1.0, 5.0)
+    return pd.DataFrame(rows)
 
-    frame = pd.DataFrame(rows)
+
+def build_prediction_dataframe(
+    image_paths: Sequence[str | Path],
+    predictions: dict[str, np.ndarray],
+    binary_labels: Sequence[str],
+    thresholds: dict[str, float],
+) -> pd.DataFrame:
+    """Convert model predictions into the TensorFlow NB05-compatible CSV schema."""
+
+    paths = [Path(path) for path in image_paths]
+    values = build_prediction_values_dataframe(
+        predictions,
+        binary_labels=binary_labels,
+        thresholds=thresholds,
+    )
+    if len(values) != len(paths):
+        raise ValueError("Prediction row count does not match the requested image paths.")
+    frame = values.copy()
+    frame.insert(0, "image_filename", [path.name for path in paths])
     if not frame["image_filename"].is_unique:
         raise ValueError("Inference image filenames must be unique in the prediction export.")
     return frame
 
 
-def expected_prediction_columns(binary_labels: Sequence[str]) -> list[str]:
-    """Return the stable image-only prediction CSV column order."""
+def expected_prediction_value_columns(binary_labels: Sequence[str]) -> list[str]:
+    """Return prediction columns that do not identify the source image."""
 
-    columns = ["image_filename"]
+    columns: list[str] = []
     for label in binary_labels:
         columns.extend((f"{label}_prob", f"{label}_pred"))
     columns.extend(("shade_class", "shade_confidence", "score_ev", "veg_ev"))
     return columns
+
+
+def expected_prediction_columns(binary_labels: Sequence[str]) -> list[str]:
+    """Return the stable image-only prediction CSV column order."""
+
+    return ["image_filename", *expected_prediction_value_columns(binary_labels)]
+
+
+def validate_prediction_values_dataframe(
+    frame: pd.DataFrame,
+    binary_labels: Sequence[str],
+    expected_rows: int | None = None,
+) -> None:
+    """Validate prediction values independently from image identity columns."""
+
+    expected_columns = expected_prediction_value_columns(binary_labels)
+    if frame.columns.tolist() != expected_columns:
+        raise ValueError(
+            "Prediction value columns do not match the stable schema. "
+            f"Expected {expected_columns}, found {frame.columns.tolist()}."
+        )
+    if expected_rows is not None and len(frame) != expected_rows:
+        raise ValueError(
+            f"Prediction row count {len(frame)} does not match requested images "
+            f"{expected_rows}."
+        )
+    if frame.empty:
+        raise ValueError("Prediction export cannot be empty.")
+
+    for label in binary_labels:
+        probability = pd.to_numeric(frame[f"{label}_prob"], errors="coerce")
+        prediction = pd.to_numeric(frame[f"{label}_pred"], errors="coerce")
+        if not probability.notna().all() or not probability.between(0.0, 1.0).all():
+            raise ValueError(f"Prediction probabilities are invalid for {label}.")
+        if not prediction.isin((0, 1)).all():
+            raise ValueError(f"Hard predictions are invalid for {label}.")
+
+    if not frame["shade_class"].isin(("minimal", "abundant")).all():
+        raise ValueError("Shade predictions must be 'minimal' or 'abundant'.")
+    shade_confidence = pd.to_numeric(frame["shade_confidence"], errors="coerce")
+    if not shade_confidence.notna().all() or not shade_confidence.between(0.0, 1.0).all():
+        raise ValueError("Shade confidence values must be finite and within [0, 1].")
+    for column in ("score_ev", "veg_ev"):
+        values = pd.to_numeric(frame[column], errors="coerce")
+        if not values.notna().all() or not values.between(1.0, 5.0).all():
+            raise ValueError(f"{column} values must be finite and within [1, 5].")
 
 
 def validate_prediction_dataframe(
@@ -174,24 +336,11 @@ def validate_prediction_dataframe(
         raise ValueError("Prediction export cannot be empty.")
     if not frame["image_filename"].is_unique:
         raise ValueError("Prediction export contains duplicate image filenames.")
-
-    for label in binary_labels:
-        probability = pd.to_numeric(frame[f"{label}_prob"], errors="coerce")
-        prediction = pd.to_numeric(frame[f"{label}_pred"], errors="coerce")
-        if not probability.notna().all() or not probability.between(0.0, 1.0).all():
-            raise ValueError(f"Prediction probabilities are invalid for {label}.")
-        if not prediction.isin((0, 1)).all():
-            raise ValueError(f"Hard predictions are invalid for {label}.")
-
-    if not frame["shade_class"].isin(("minimal", "abundant")).all():
-        raise ValueError("Shade predictions must be 'minimal' or 'abundant'.")
-    shade_confidence = pd.to_numeric(frame["shade_confidence"], errors="coerce")
-    if not shade_confidence.notna().all() or not shade_confidence.between(0.0, 1.0).all():
-        raise ValueError("Shade confidence values must be finite and within [0, 1].")
-    for column in ("score_ev", "veg_ev"):
-        values = pd.to_numeric(frame[column], errors="coerce")
-        if not values.notna().all() or not values.between(1.0, 5.0).all():
-            raise ValueError(f"{column} values must be finite and within [1, 5].")
+    validate_prediction_values_dataframe(
+        frame[expected_prediction_value_columns(binary_labels)],
+        binary_labels=binary_labels,
+        expected_rows=expected_rows,
+    )
 
 
 def inference_output_tag(

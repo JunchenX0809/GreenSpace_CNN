@@ -116,14 +116,182 @@ If CUDA is unavailable and CPU inference is required, begin with:
 `--batch-size` controls how many images the model processes together. It does
 not control the number of rows written to each output CSV.
 
-## Deferred until the server layout is known
+## Windows Workstation Inference Walkthrough — Part 2
 
-The next walkthrough section will define:
+### Current status
 
-- the full image-root path and state subdirectory structure;
-- recursive state-by-state discovery;
-- per-state or chunked CSV outputs;
-- restart and completion behavior;
-- the exact validation, smoke-test, and full inference commands.
+`scripts/predict_state_tree.py` is implemented and locally tested. It still
+needs to be verified on the Windows workstation before a full run.
 
-No directory-iteration or inference-script changes are included in Part 1.
+The script stays inside the cloned repository. It reads the existing images
+and model from `Z:` and writes only to `Z:\GEE Derived\inference_outputs`.
+It does not move or rename source images.
+
+```mermaid
+flowchart LR
+    R[Cloned repository] --> S[scripts/predict_state_tree.py]
+    M[Z:\GEE Derived\model_bundle<br/>model files] -->|read| S
+    I[Z:\GEE Derived\USA_XX...<br/>park / jpg / images] -->|read| S
+    S -->|write| O[Z:\GEE Derived\inference_outputs<br/>CSV parts, logs, summaries]
+```
+
+### Step 1 — Set the four paths
+
+Open PowerShell, enter the cloned repository, and activate `.venv` as shown in
+Part 1. Then set these variables. Replace only `$Repo` and `$Checkpoint` if
+their real locations differ.
+
+```powershell
+$Repo = "C:\path\to\GreenSpace_CNN"
+$ImageRoot = "Z:\GEE Derived"
+$OutputRoot = "Z:\GEE Derived\inference_outputs"
+$Checkpoint = "Z:\GEE Derived\model_bundle\PyTorch_20260719_full_windows\best_mcmae_PyTorch_20260719_full_windows.pt"
+
+cd $Repo
+.\.venv\Scripts\Activate.ps1
+```
+
+The checkpoint, `model_config_PyTorch_20260719_full_windows.json`, and
+`thresholds_best_mcmae.csv` must be in the same folder. If the downloaded zip
+contains an extra `transfer_file` folder, point `$Checkpoint` to the `.pt` file
+inside that folder. Do not guess or move only the `.pt` file.
+
+Check the paths:
+
+```powershell
+Test-Path $ImageRoot
+Test-Path $Checkpoint
+Test-Path (Join-Path (Split-Path $Checkpoint) "model_config_PyTorch_20260719_full_windows.json")
+Test-Path (Join-Path (Split-Path $Checkpoint) "thresholds_best_mcmae.csv")
+```
+
+All four results must be `True` before prediction.
+
+The commands below assume Part 1 reported `CUDA available: True`. If it did
+not, use `--device cpu --no-pin-memory` instead; do not install or change CUDA
+during this walkthrough.
+
+### Step 2 — Inventory Alabama without loading the model
+
+Use a new `--run-id` each time a new inventory or test is started.
+
+```powershell
+python scripts/predict_state_tree.py `
+  --image-root $ImageRoot `
+  --output-dir $OutputRoot `
+  --run-id "AL_inventory_01" `
+  --states AL `
+  --inventory-only
+```
+
+Review:
+
+```powershell
+Get-Content "$OutputRoot\AL_inventory_01\run_summary.json"
+Import-Csv "$OutputRoot\AL_inventory_01\inventory\USA_AL_inventory.csv" | Select-Object -First 5
+```
+
+Stop if the state folder is missing, more than one top-level folder resolves
+to `AL`, the inventory is empty, or the example paths do not match File
+Explorer.
+
+### Step 3 — Optional exact-image check
+
+This command demonstrates the exact example supplied for Alabama. Confirm the
+file exists first.
+
+```powershell
+$ExampleImage = "Z:\GEE Derived\USA_AL_2023_Full-20260709T203911Z-2-001\USA_AL_2023_Full\04033-1402\jpg\04033-1402_1_export0_USA_AL_04033-1402_1_0-00000_p00000.jpg"
+Test-Path $ExampleImage
+
+python scripts/predict_state_tree.py `
+  --checkpoint $Checkpoint `
+  --image-root $ImageRoot `
+  --output-dir $OutputRoot `
+  --run-id "AL_exact1_01" `
+  --image-path $ExampleImage `
+  --device cuda `
+  --batch-size 1 `
+  --num-workers 2 `
+  --pin-memory
+```
+
+If `Test-Path` is `False`, do not run the command; select the correct path from
+the inventory instead.
+
+### Step 4 — Required 5-image smoke test
+
+The five images are the first five paths in deterministic sorted order, not a
+random sample.
+
+```powershell
+python scripts/predict_state_tree.py `
+  --checkpoint $Checkpoint `
+  --image-root $ImageRoot `
+  --output-dir $OutputRoot `
+  --run-id "AL_smoke5_01" `
+  --states AL `
+  --max-images 5 `
+  --device cuda `
+  --batch-size 1 `
+  --num-workers 2 `
+  --pin-memory
+```
+
+Check the summary and log:
+
+```powershell
+Get-Content "$OutputRoot\AL_smoke5_01\run_summary.json"
+Get-Content "$OutputRoot\AL_smoke5_01\logs\inference.log" -Tail 30
+```
+
+The summary must say `status: complete` and satisfy:
+
+```text
+images_attempted = images_succeeded + images_failed
+```
+
+Unreadable images appear in the matching `failures_*.csv`. CUDA, model,
+schema, and output errors stop the run.
+
+### Step 5 — Run the 1,000-image test
+
+Only continue after the 5-image smoke test succeeds.
+
+```powershell
+python scripts/predict_state_tree.py `
+  --checkpoint $Checkpoint `
+  --image-root $ImageRoot `
+  --output-dir $OutputRoot `
+  --run-id "AL_test1000_01" `
+  --states AL `
+  --max-images 1000 `
+  --images-per-part 1000 `
+  --device cuda `
+  --batch-size 1 `
+  --num-workers 2 `
+  --pin-memory
+```
+
+This creates one prediction CSV part and one failure CSV part under:
+
+```text
+Z:\GEE Derived\inference_outputs\AL_test1000_01\states\USA_AL\
+```
+
+### If a run is interrupted
+
+Repeat the exact same command and add `--resume`. Do not change its paths,
+state, limits, part size, or device settings. The script validates completed
+parts and skips only those that are complete.
+
+### Still unknown until the live walkthrough
+
+- whether CUDA is available to this PyTorch environment;
+- the cloned repository's final Windows path;
+- the extracted checkpoint's final path, including whether `transfer_file`
+  remains in it;
+- whether the Windows account can read `Z:` and write `inference_outputs`;
+- whether every state follows the reported folder pattern.
+
+Do not start multi-state inference until these checks and both smoke tests pass.
