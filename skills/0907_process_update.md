@@ -143,6 +143,13 @@ not control the number of rows written to each output CSV.
 `scripts/predict_state_tree.py` is implemented and locally tested. It still
 needs to be verified on the Windows workstation before a full run.
 
+The September 16 exact-image test confirmed that the model loads on CUDA, but
+Windows could not start two loader workers because the image transform was a
+nested function. The transform is now a module-level picklable callable. A
+forced Windows-style `spawn` test and a real-checkpoint two-worker inference
+both pass locally. The PI must pull this change and repeat the exact-image test
+to complete Windows verification.
+
 The script stays inside the cloned repository. It reads the existing images
 and model from `Z:` and writes only to `Z:\GEE Derived\inference_outputs`.
 It does not move or rename source images.
@@ -228,7 +235,7 @@ Test-Path $ExampleImage
   --checkpoint $Checkpoint `
   --image-root $ImageRoot `
   --output-dir $OutputRoot `
-  --run-id "AL_exact1_01" `
+  --run-id "AL_exact1_02" `
   --image-path $ExampleImage `
   --device cuda `
   --batch-size 1 `
@@ -238,6 +245,10 @@ Test-Path $ExampleImage
 
 If `Test-Path` is `False`, do not run the command; select the correct path from
 the inventory instead.
+
+If Windows still reports `Can't get local object` after pulling the fix, stop
+and confirm the latest code was pulled. `--num-workers 0` remains the safe
+single-process fallback; it does not disable CUDA or change predictions.
 
 ### Step 4 — Required 5-image smoke test
 
@@ -307,7 +318,7 @@ parts and skips only those that are complete.
 
 ### Still unknown until the live walkthrough
 
-- whether the CUDA-enabled PyTorch reinstall succeeds with driver 528.24;
+- whether the picklable-transform change succeeds with two workers on Windows;
 - the extracted checkpoint's final path, including whether `transfer_file`
   remains in it;
 - whether the Windows account can read `Z:` and write `inference_outputs`;

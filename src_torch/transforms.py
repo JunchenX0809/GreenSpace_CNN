@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import numpy as np
@@ -67,6 +68,32 @@ def _augment_unit_tensor(tensor: Any) -> Any:
     return tensor.clamp(0.0, 1.0)
 
 
+@dataclass(frozen=True)
+class _ImageTensorTransform:
+    """Picklable RGB transform for spawned DataLoader workers."""
+
+    img_size: tuple[int, int]
+    augment: bool
+    scale_255: bool
+
+    def __call__(self, img: Image.Image) -> Any:
+        tensor = _pil_to_unit_tensor(img, self.img_size)
+        if self.augment:
+            tensor = _augment_unit_tensor(tensor)
+        return tensor * 255.0 if self.scale_255 else tensor
+
+
+@dataclass(frozen=True)
+class _BackbonePreprocessTransform:
+    """Compose two picklable callables without a local closure."""
+
+    base_transform: Callable[[Image.Image], Any]
+    backbone_preprocess: Callable[[Any], Any]
+
+    def __call__(self, img: Image.Image) -> Any:
+        return self.backbone_preprocess(self.base_transform(img))
+
+
 def tf_parity_image_transform(
     img_size: tuple[int, int] = TORCH_DATA_CONFIG["img_size"],
     augment: bool = False,
@@ -78,11 +105,11 @@ def tf_parity_image_transform(
     so the transform contract is stable.
     """
 
-    def transform(img: Image.Image) -> Any:
-        tensor = _pil_to_unit_tensor(img, img_size)
-        return _augment_unit_tensor(tensor) if augment else tensor
-
-    return transform
+    return _ImageTensorTransform(
+        img_size=tuple(img_size),
+        augment=bool(augment),
+        scale_255=False,
+    )
 
 
 def rgb_255_image_transform(
@@ -91,13 +118,11 @@ def rgb_255_image_transform(
 ) -> Callable[[Image.Image], Any]:
     """Return RGB tensor in 0..255 scale for TorchGeo weight transforms."""
 
-    def transform(img: Image.Image) -> Any:
-        tensor = _pil_to_unit_tensor(img, img_size)
-        if augment:
-            tensor = _augment_unit_tensor(tensor)
-        return tensor * 255.0
-
-    return transform
+    return _ImageTensorTransform(
+        img_size=tuple(img_size),
+        augment=bool(augment),
+        scale_255=True,
+    )
 
 
 def build_image_transform(
@@ -118,10 +143,10 @@ def build_image_transform(
     if backbone_preprocess is None:
         return base_transform
 
-    def transform(img: Image.Image) -> Any:
-        return backbone_preprocess(base_transform(img))
-
-    return transform
+    return _BackbonePreprocessTransform(
+        base_transform=base_transform,
+        backbone_preprocess=backbone_preprocess,
+    )
 
 
 def tensor_summary(tensor: Any) -> dict[str, Any]:
