@@ -118,23 +118,24 @@ Save or send:
 
 ## Initial inference settings
 
-If Step 4 reports `CUDA available: True`, begin the later smoke test with:
-
-```text
---device cuda --batch-size 1 --num-workers 2 --pin-memory
-```
+If Step 4 reports `CUDA available: True`, the complete smoke-test command in
+Part 2 uses CUDA, batch size 1, two image-loading workers, and pinned memory.
+Do **not** paste options such as `--device cuda` into PowerShell by themselves.
+They are inputs to `predict_state_tree.py`, not standalone PowerShell commands.
 
 The T1000 has only 4 GB of GPU memory, so batch size 1 is the safe starting
 point. Increase it only after a small inference test succeeds.
 
-If CUDA is unavailable and CPU inference is required, begin with:
-
-```text
---device cpu --batch-size 1 --num-workers 2 --no-pin-memory
-```
+If CUDA is unavailable and CPU inference is required, replace `--device cuda`
+with `--device cpu` and replace `--pin-memory` with `--no-pin-memory` in the
+complete command.
 
 `--batch-size` controls how many images the model processes together. It does
 not control the number of rows written to each output CSV.
+
+`--num-workers` controls how many background processes load and prepare
+images. Two workers are used first to verify the Windows fix. It does not
+change prediction values.
 
 ## Windows Workstation Inference Walkthrough — Part 2
 
@@ -198,7 +199,23 @@ The commands below assume Part 1 reported `CUDA available: True`. If it did
 not, use `--device cpu --no-pin-memory` instead; do not install or change CUDA
 during this walkthrough.
 
-### Step 2 — Inventory Alabama without loading the model
+### Step 2 — Pull and confirm the Windows worker fix
+
+Pull the current repository code:
+
+```powershell
+git pull
+Select-String -Path "src_torch\transforms.py" -Pattern "class _ImageTensorTransform"
+```
+
+The second command must print a matching line. That class is the code change
+that lets Windows transfer the image transform to background workers. If no
+match appears, stop: the workstation does not yet have the fix.
+
+### Step 3 — Inventory Alabama without loading the model (already verified)
+
+This step succeeded during the previous walkthrough with the PI. Skip it for
+the worker-only retest unless the Alabama image folders have changed.
 
 Use a new `--run-id` each time a new inventory or test is started.
 
@@ -222,35 +239,42 @@ Stop if the state folder is missing, more than one top-level folder resolves
 to `AL`, the inventory is empty, or the example paths do not match File
 Explorer.
 
-### Step 3 — Optional exact-image check
+### Step 4 — Verify the worker fix with one exact image
 
-This command demonstrates the exact example supplied for Alabama. Confirm the
-file exists first.
+This deliberately uses two workers, matching the setting that exposed the old
+Windows error. Confirm the example file exists first.
 
 ```powershell
 $ExampleImage = "Z:\GEE Derived\USA_AL_2023_Full-20260709T203911Z-2-001\USA_AL_2023_Full\04033-1402\jpg\04033-1402_1_export0_USA_AL_04033-1402_1_0-00000_p00000.jpg"
 Test-Path $ExampleImage
+```
 
-& $Python scripts\predict_state_tree.py `
-  --checkpoint $Checkpoint `
-  --image-root $ImageRoot `
-  --output-dir $OutputRoot `
-  --run-id "AL_exact1_02" `
-  --image-path $ExampleImage `
-  --device cuda `
-  --batch-size 1 `
-  --num-workers 2 `
-  --pin-memory
+If the PowerShell prompt shows `>>`, press `Ctrl+C` once to cancel the
+incomplete command. Then copy and run this **entire line**:
+
+```powershell
+& $Python scripts\predict_state_tree.py --checkpoint $Checkpoint --image-root $ImageRoot --output-dir $OutputRoot --run-id "AL_exact1_workers2_01" --image-path $ExampleImage --device cuda --batch-size 1 --num-workers 2 --pin-memory
 ```
 
 If `Test-Path` is `False`, do not run the command; select the correct path from
 the inventory instead.
 
-If Windows still reports `Can't get local object` after pulling the fix, stop
-and confirm the latest code was pulled. `--num-workers 0` remains the safe
-single-process fallback; it does not disable CUDA or change predictions.
+Success should include `device=cuda`, `workers=2`, `attempted=1`, `succeeded=1`,
+`failed=0`, and `Run complete` in the log output.
 
-### Step 4 — Required 5-image smoke test
+These are two different errors:
+
+- `Unexpected token 'device'` means options beginning with `--` were pasted
+  without the Python command. It is a PowerShell command-entry error; rerun the
+  complete one-line command above.
+- `Can't get local object` means the old, non-transferable image transform is
+  still being used. Stop and confirm Step 2 printed the expected class.
+
+If necessary, `--num-workers 0` remains a safe single-process fallback. It
+does not disable CUDA or change predictions, but it does not verify the new
+two-worker fix.
+
+### Step 5 — Required 5-image smoke test
 
 The five images are the first five paths in deterministic sorted order, not a
 random sample.
@@ -285,7 +309,7 @@ images_attempted = images_succeeded + images_failed
 Unreadable images appear in the matching `failures_*.csv`. CUDA, model,
 schema, and output errors stop the run.
 
-### Step 5 — Run the 1,000-image test
+### Step 6 — Run the 1,000-image test
 
 Only continue after the 5-image smoke test succeeds.
 
@@ -303,6 +327,10 @@ Only continue after the 5-image smoke test succeeds.
   --num-workers 2 `
   --pin-memory
 ```
+
+Keep two workers for this first workstation trial. Test four workers later as
+a separate performance comparison, after the two-worker fix is verified.
+Worker count can affect speed, but not prediction values.
 
 This creates one prediction CSV part and one failure CSV part under:
 
