@@ -60,6 +60,8 @@ Generated reports and model files are ignored by Git.
 | Saved-history epoch visual | `scripts/plot_training_curves.py` | Ready |
 | Evaluation and validation threshold tuning | `scripts/evaluate_torch.py` | Ready |
 | Standalone prediction CLI | `scripts/predict_torch.py` | Ready |
+| Workstation state-tree inference CLI | `scripts/predict_state_tree.py` | Ready |
+| Workstation prediction coordinate join | `scripts/append_patch_coordinates.py` | Ready |
 | Read-only pipeline validation CLI | `scripts/validate_pipeline.py` | Ready |
 | End-to-end 50-image showcase | `notebooks/CORE_pipeline_v1.ipynb` | Ready |
 
@@ -231,6 +233,41 @@ The full command should report `Images: 50`. Its CSV contains 50 unique image
 rows and 19 columns for the current seven-binary-label model. Existing output
 files are protected; use a new dataset tag or pass `--overwrite` explicitly
 when a replacement is intended.
+
+## Add patch centers to workstation state predictions
+
+After `scripts/predict_state_tree.py` finishes, run the coordinate join against
+the same `--image-root` used for inference. The raw state tree must still contain
+each park's `tables/<park_code>_patch_points.csv`. Pass one state's prediction
+directory at a time. This step uses only the Python standard library and does
+not load the model or rerun inference.
+
+```powershell
+$Python = (Resolve-Path ".\.venv\Scripts\python.exe").Path
+& $Python scripts\append_patch_coordinates.py --image-root "Z:\GEE Derived" --predictions-dir "Z:\GEE Derived\inference_outputs\<run-id>\states\USA_AL"
+```
+
+For the local Alabama copy, the equivalent command from the repository root is:
+
+```bash
+python scripts/append_patch_coordinates.py \
+  --image-root data \
+  --predictions-dir data/USA_AL
+```
+
+The command writes `predictions_USA_AL_part_00001_with_coordinates.csv` and
+corresponding later parts beside the original files. `--output-dir` can select
+another destination; `--overwrite` explicitly replaces earlier enriched files.
+It appends `center_x,center_y` without changing prediction columns or row order.
+The join checks every prediction against the park table using the exported JPG
+filename encoded by `full_park_id`, `export_index`, `source_tfrecord`, and
+`patch_id`, and stops if a coordinate is missing, duplicated, or invalid.
+
+The copied Alabama raster and point metadata identify these coordinates as
+EPSG:5070 (NAD83 / Conus Albers), in metres. They are projected X/Y values,
+not longitude/latitude. The patch table also contains `na_ratio`; this join
+does not use it. Its name suggests a missing-data fraction, but its exact
+calculation is not documented in this repository.
 
 ## Data contract
 

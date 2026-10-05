@@ -8,6 +8,8 @@
 /data/processed/**
 /data/core_pipeline_demo/**
 /data/smoke_50/**
+/data/USA_*/
+/data/USA_*.zip
 !/data/README.md
 !/data/**/README.md
 !/data/**/.gitkeep
