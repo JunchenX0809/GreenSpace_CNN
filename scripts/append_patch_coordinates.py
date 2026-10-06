@@ -118,7 +118,7 @@ def _table_for_prediction(
     if (
         relative.is_absolute()
         or "\\" in relative_text
-        or len(parts) < 5
+        or len(parts) < 4
         or any(component in ("", ".", "..") for component in relative_text.split("/"))
         or parts[-2] != "jpg"
         or parts[-3] != row["park_code"]
