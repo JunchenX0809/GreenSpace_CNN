@@ -50,6 +50,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite", action="store_true",
         help="Replace previously enriched outputs after the full join validates",
     )
+    parser.add_argument(
+        "--skip-bad-tables", action="store_true",
+        help=(
+            "Keep going when a park's patch-point table is missing, empty or malformed, "
+            "or an image has no matching point: those rows get blank coordinates and are "
+            "listed in skipped_coordinates_USA_XX.csv in the output directory"
+        ),
+    )
     return parser
 
 
@@ -130,7 +138,12 @@ def _table_for_prediction(
 
 
 def enrich_parts(
-    image_root: Path, predictions_dir: Path, output_dir: Path, overwrite: bool = False
+    image_root: Path,
+    predictions_dir: Path,
+    output_dir: Path,
+    overwrite: bool = False,
+    skip_bad_tables: bool = False,
+    skipped: list[dict[str, str]] | None = None,
 ) -> tuple[int, int]:
     if not image_root.is_dir():
         raise FileNotFoundError(f"Missing image root: {image_root}")
@@ -153,7 +166,10 @@ def enrich_parts(
             raise FileExistsError(f"Output already exists: {existing[0]}; use --overwrite")
 
     # Validate every row and every join before publishing any output.
-    point_cache: dict[Path, dict[str, tuple[str, str]]] = {}
+    point_cache: dict[Path, dict[str, tuple[str, str]] | None] = {}
+    table_errors: dict[Path, str] = {}
+    if skipped is None:
+        skipped = []
     seen_paths: set[str] = set()
     prepared: list[tuple[list[str], list[dict[str, str]]]] = []
     total_rows = 0
@@ -171,13 +187,32 @@ def enrich_parts(
             seen_paths.add(relative.casefold())
             table = _table_for_prediction(image_root, row, part, line)
             if table not in point_cache:
-                point_cache[table] = _load_points(table, state, row["park_code"])
-            coordinates = point_cache[table].get(row["image_filename"])
+                try:
+                    point_cache[table] = _load_points(table, state, row["park_code"])
+                except (OSError, ValueError) as exc:
+                    if not skip_bad_tables:
+                        raise
+                    point_cache[table] = None
+                    table_errors[table] = str(exc)
+                    print(f"WARNING: skipping table: {exc}", file=sys.stderr)
+            points = point_cache[table]
+            coordinates = None if points is None else points.get(row["image_filename"])
             if coordinates is None:
-                raise ValueError(
-                    f"No patch-point match for {row['image_filename']} at {part}:{line} "
-                    f"in {table}"
-                )
+                if points is None:
+                    reason = f"bad patch-point table: {table_errors[table]}"
+                else:
+                    reason = f"no patch-point match in {table}"
+                if not skip_bad_tables:
+                    raise ValueError(
+                        f"No patch-point match for {row['image_filename']} at {part}:{line} "
+                        f"in {table}"
+                    )
+                skipped.append({
+                    "part": part.name, "line": str(line),
+                    "park_code": row["park_code"],
+                    "image_relative_path": relative, "reason": reason,
+                })
+                coordinates = ("", "")
             row["center_x"], row["center_y"] = coordinates
         total_rows += len(rows)
         prepared.append((columns + ["center_x", "center_y"], rows))
@@ -198,6 +233,17 @@ def enrich_parts(
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
+    report = output_dir / f"skipped_coordinates_USA_{state}.csv"
+    if skipped:
+        with report.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["part", "line", "park_code", "image_relative_path", "reason"],
+            )
+            writer.writeheader()
+            writer.writerows(skipped)
+    elif report.exists():
+        report.unlink()
     return len(parts), total_rows
 
 
@@ -205,15 +251,24 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     predictions_dir = Path(args.predictions_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else predictions_dir
+    skipped: list[dict[str, str]] = []
     try:
         part_count, row_count = enrich_parts(
             Path(args.image_root).expanduser().resolve(), predictions_dir,
-            output_dir, args.overwrite,
+            output_dir, args.overwrite, args.skip_bad_tables, skipped,
         )
     except (OSError, ValueError) as exc:
         print(f"Coordinate join failed: {exc}", file=sys.stderr)
         return 1
-    print(f"Wrote {row_count} matched predictions across {part_count} parts to {output_dir}")
+    matched = row_count - len(skipped)
+    print(f"Wrote {matched} matched predictions across {part_count} parts to {output_dir}")
+    if skipped:
+        parks = len({entry["park_code"] for entry in skipped})
+        print(
+            f"Skipped coordinates for {len(skipped)} predictions in {parks} parks; "
+            f"see skipped_coordinates_USA_*.csv in {output_dir}",
+            file=sys.stderr,
+        )
     return 0
 
 
